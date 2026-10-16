@@ -95,8 +95,21 @@ fn sync_once(api: &dyn Api, state_dir: &Path, force: bool) -> Result<String> {
         statuses.entry(agent.workspace_id.as_str()).or_default().push(agent.agent_status);
     }
     let header_map: BTreeMap<&str, &str> = split.headers.iter().map(|(g, w)| (*g, w.workspace_id.as_str())).collect();
+    // The branch of every main checkout that gets a `[primary]` row (it has worktrees or agents).
+    let branches: BTreeMap<&str, String> = sections
+        .iter()
+        .flat_map(|s| &s.entries)
+        .filter(|e| !e.worktrees.is_empty() || statuses.contains_key(e.ws.workspace_id.as_str()))
+        .filter_map(|e| {
+            // Herdr leaves `worktree` out for some repos; the first pane's folder still finds it.
+            let checkout = e.ws.worktree.as_ref().map(|w| w.checkout_path.as_str()).filter(|p| !p.is_empty()).or_else(|| {
+                snap.panes.iter().find(|p| p.workspace_id == e.ws.workspace_id).and_then(|p| p.cwd.as_deref())
+            })?;
+            Some((e.ws.workspace_id.as_str(), branch_of(checkout)?))
+        })
+        .collect();
     let width = row_width();
-    let layout = Layout { sections: &sections, headers: &header_map, statuses: &statuses, sidebar: &sidebar, focused: focused.as_deref(), width };
+    let layout = Layout { sections: &sections, headers: &header_map, statuses: &statuses, branches: &branches, sidebar: &sidebar, focused: focused.as_deref(), width };
     let workspace_tokens = tokens(&layout);
 
     // Agents tab: workspaces in sidebar order, each titled "Group › parent › worktree".
@@ -106,7 +119,9 @@ fn sync_once(api: &dyn Api, state_dir: &Path, force: bool) -> Result<String> {
         let prefix: Vec<&str> = section.group.into_iter().collect();
         for entry in &section.entries {
             ws_order.push(&entry.ws.workspace_id);
-            titles.insert(&entry.ws.workspace_id, [prefix.as_slice(), &[entry.ws.label.as_str()]].concat().join(" › "));
+            let branch = branches.get(entry.ws.workspace_id.as_str()).map(String::as_str);
+            let own: Vec<&str> = std::iter::once(entry.ws.label.as_str()).chain(branch).collect();
+            titles.insert(&entry.ws.workspace_id, [prefix.as_slice(), &own].concat().join(" › "));
             for wt in &entry.worktrees {
                 ws_order.push(&wt.workspace_id);
                 let path = [prefix.as_slice(), &[entry.ws.label.as_str(), wt.label.as_str()]].concat();
@@ -124,6 +139,25 @@ fn sync_once(api: &dyn Api, state_dir: &Path, force: bool) -> Result<String> {
     }
     let grouped = sections.iter().filter(|s| s.group.is_some()).map(|s| s.entries.len()).sum::<usize>();
     Ok(format!("Synced {grouped} grouped workspace(s) across {} group(s).", groups.groups.len()))
+}
+
+/// The branch a checkout is on, from its `HEAD` (a short commit id when detached). Looks up from
+/// `dir` for `.git`, which is a directory, or a `gitdir:` file in linked worktrees and submodules.
+pub fn branch_of(dir: &str) -> Option<String> {
+    let dot_git = Path::new(dir).ancestors().map(|d| d.join(".git")).find(|g| g.exists())?;
+    let git_dir = match std::fs::read_to_string(&dot_git) {
+        Ok(file) => {
+            let target = Path::new(file.trim().strip_prefix("gitdir:")?.trim());
+            dot_git.parent()?.join(target)
+        }
+        Err(_) => dot_git,
+    };
+    let head = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    let head = head.trim();
+    match head.strip_prefix("ref: refs/heads/") {
+        Some(branch) => Some(branch.to_owned()),
+        None => Some(head.get(..7)?.to_owned()),
+    }
 }
 
 /// Apply the agent view when the usage label changed, or after a full resend (agent views do not
@@ -225,6 +259,26 @@ mod tests {
         assert_eq!(created.1["label"], "⟦A⟧");
         assert_eq!(created.1["cwd"], dir.join("headers/A").to_string_lossy().as_ref());
         drop(sent);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn branch_comes_from_git_head() {
+        let dir = temp_dir("branch");
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        std::fs::write(dir.join(".git/HEAD"), "ref: refs/heads/feat/x\n").unwrap();
+        assert_eq!(branch_of(dir.to_str().unwrap()).as_deref(), Some("feat/x"));
+        std::fs::create_dir_all(dir.join("src/deep")).unwrap();
+        assert_eq!(branch_of(dir.join("src/deep").to_str().unwrap()).as_deref(), Some("feat/x"), "found from a subfolder");
+        std::fs::write(dir.join(".git/HEAD"), "0123456789abcdef\n").unwrap();
+        assert_eq!(branch_of(dir.to_str().unwrap()).as_deref(), Some("0123456"));
+        let linked = dir.join("wt");
+        std::fs::create_dir_all(linked.join("../gitdirs/wt")).unwrap();
+        std::fs::create_dir_all(&linked).unwrap();
+        std::fs::write(linked.join(".git"), "gitdir: ../gitdirs/wt\n").unwrap();
+        std::fs::write(dir.join("gitdirs/wt/HEAD"), "ref: refs/heads/fix-1\n").unwrap();
+        assert_eq!(branch_of(linked.to_str().unwrap()).as_deref(), Some("fix-1"), "a gitdir file is followed");
+        assert_eq!(branch_of("/nonexistent"), None);
         let _ = std::fs::remove_dir_all(dir);
     }
 

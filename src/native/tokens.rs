@@ -1,5 +1,8 @@
-//! `group_header` / `group_row` per workspace. A whole row is one token, so Herdr draws no `·`
-//! separators; Herdr indents rows after an entry's first by two columns, hence braille blanks.
+//! `group_header` / `group_row` / `group_branch` per workspace. A whole row is one token, so Herdr
+//! draws no `·` separators; Herdr indents rows after an entry's first by two columns, hence the
+//! braille blanks. A primary workspace with worktrees or agents shows its main checkout as a
+//! `[primary]` branch row (`group_branch`), so the repo row itself carries no agent counts and
+//! every workspace reads the same way.
 use super::order::Section;
 use crate::herdr::types::AgentStatus;
 use crate::model::sidebar::Sidebar;
@@ -10,6 +13,12 @@ pub type Tokens = BTreeMap<String, Option<String>>;
 
 /// Braille blanks: Herdr does not trim them like spaces.
 const PAD: &str = "⠀⠀";
+/// Prefix of the main-checkout row. Herdr indents an entry's second row by two columns; three
+/// more line the label up with the worktree names after Herdr's own (dim) `├─` connectors. No
+/// connector of our own: a cell has one color, so it could never match Herdr's.
+const BRANCH: &str = "⠀⠀⠀";
+/// Marks the main checkout among the repo's worktrees.
+const PRIMARY: &str = "[primary]";
 const RULE: &str = "━━━━━━━━━━";
 
 pub struct Layout<'a> {
@@ -18,13 +27,19 @@ pub struct Layout<'a> {
     pub headers: &'a BTreeMap<&'a str, &'a str>,
     /// workspace id → its agents' states
     pub statuses: &'a BTreeMap<&'a str, Vec<AgentStatus>>,
+    /// primary workspace id → the branch its main checkout is on
+    pub branches: &'a BTreeMap<&'a str, String>,
     pub sidebar: &'a Sidebar,
     pub focused: Option<&'a str>,
     pub width: usize,
 }
 
-fn pair(header: Option<String>, row: Option<String>) -> Tokens {
-    BTreeMap::from([("group_header".to_owned(), header), ("group_row".to_owned(), row)])
+fn row_tokens(header: Option<String>, row: Option<String>, branch: Option<String>) -> Tokens {
+    BTreeMap::from([
+        ("group_header".to_owned(), header),
+        ("group_row".to_owned(), row),
+        ("group_branch".to_owned(), branch),
+    ])
 }
 
 pub fn tokens(layout: &Layout) -> BTreeMap<String, Tokens> {
@@ -43,7 +58,7 @@ pub fn tokens(layout: &Layout) -> BTreeMap<String, Tokens> {
             format!("━━ {title} · {n}{counts} {RULE}")
         });
         if let (Some(id), Some(text)) = (header_ws, &header) {
-            out.insert(id.to_owned(), pair(Some(text.clone()), None));
+            out.insert(id.to_owned(), row_tokens(Some(text.clone()), None, None));
         }
         for (i, entry) in section.entries.iter().enumerate() {
             let tree = match (section.group, i + 1 == n) {
@@ -54,13 +69,28 @@ pub fn tokens(layout: &Layout) -> BTreeMap<String, Tokens> {
             // Without its header workspace (not created yet) the first entry carries the header.
             let carries_header = header_ws.is_none() && i == 0;
             let pad = if section.group.is_some() && header_ws.is_none() && i > 0 { PAD } else { "" };
-            let rows = std::iter::once((entry.ws, format!("{pad}{tree}"))).chain(entry.worktrees.iter().map(|w| (*w, PAD.to_owned())));
+            // Herdr nests linked worktrees under their repo itself, so worktree rows need no pad.
+            let rows = std::iter::once((entry.ws, format!("{pad}{tree}"))).chain(entry.worktrees.iter().map(|w| (*w, String::new())));
             for (ws, prefix) in rows {
                 let id = ws.workspace_id.as_str();
                 let visible = !folded || layout.focused == Some(id) || states(id).contains(&AgentStatus::Blocked);
-                let text = visible.then(|| row(&prefix, &ws.label, id));
+                let is_primary = ws.workspace_id == entry.ws.workspace_id;
+                let has_branch_row = is_primary && (!entry.worktrees.is_empty() || !states(id).is_empty());
+                let (text, branch) = match has_branch_row {
+                    // The main checkout reads as one more branch, like the worktrees.
+                    true => {
+                        let label = match layout.branches.get(id) {
+                            Some(name) => format!("{PRIMARY} - {name}"),
+                            None => PRIMARY.to_owned(),
+                        };
+                        let room = layout.width.saturating_sub(2 + crate::text::width(BRANCH));
+                        let branch_row = format!("{BRANCH}{}", fit_row("", &label, &state_counts(states(id)), room));
+                        (visible.then(|| fit_row(&prefix, &ws.label, "", layout.width)), visible.then_some(branch_row))
+                    }
+                    false => (visible.then(|| row(&prefix, &ws.label, id)), None),
+                };
                 let header = (carries_header && ws.workspace_id == entry.ws.workspace_id).then(|| header.clone()).flatten();
-                out.insert(id.to_owned(), pair(header, text));
+                out.insert(id.to_owned(), row_tokens(header, text, branch));
             }
         }
     }
@@ -100,7 +130,8 @@ mod tests {
             let projects: Vec<&Workspace> = self.all.iter().collect();
             let sections = sections(&projects, &[], &self.groups);
             let headers: BTreeMap<&str, &str> = if self.with_header { [("Work", "h")].into() } else { BTreeMap::new() };
-            tokens(&Layout { sections: &sections, headers: &headers, statuses: &self.statuses, sidebar: &self.sidebar, focused: self.focused, width: 30 })
+            let branches = BTreeMap::from([("a", "develop".to_owned())]);
+            tokens(&Layout { sections: &sections, headers: &headers, statuses: &self.statuses, branches: &branches, sidebar: &self.sidebar, focused: self.focused, width: 30 })
         }
     }
 
@@ -111,13 +142,17 @@ mod tests {
     #[test]
     fn header_workspace_carries_the_header_and_members_draw_a_tree() {
         let mut case = Case::new();
-        case.statuses = [("b", vec![Working, Working, Idle])].into();
+        case.statuses = [("b", vec![Working, Working, Idle]), ("a", vec![Idle, Idle]), ("a-wt", vec![Working])].into();
         let t = case.run();
         assert_eq!(get(&t, "h", "group_header"), Some("━━ Work · 3 ━━━━━━━━━━"));
         assert_eq!(get(&t, "h", "group_row"), None);
-        assert_eq!(get(&t, "a", "group_row"), Some("├─ a-label"));
-        assert_eq!(get(&t, "a-wt", "group_row"), Some("⠀⠀a-wt-label"));
-        assert_eq!(get(&t, "b", "group_row"), Some("├─ b-label  ●2 ○1"));
+        assert_eq!(get(&t, "a", "group_row"), Some("├─ a-label"), "a repo with worktrees shows no counts itself");
+        assert_eq!(get(&t, "a", "group_branch"), Some("⠀⠀⠀[primary] - develop  ○2"), "its main checkout does");
+        assert_eq!(get(&t, "a-wt", "group_row"), Some("a-wt-label  ●1"));
+        assert_eq!(get(&t, "a-wt", "group_branch"), None);
+        assert_eq!(get(&t, "b", "group_row"), Some("├─ b-label"), "agents move to the branch row");
+        assert_eq!(get(&t, "b", "group_branch"), Some("⠀⠀⠀[primary]  ●2 ○1"), "unknown branch: just the marker");
+        assert_eq!(get(&t, "c", "group_branch"), None, "no worktrees and no agents: one row");
         assert_eq!(get(&t, "c", "group_row"), Some("└─ c-label"));
         assert_eq!(get(&t, "u", "group_row"), Some("u-label"), "ungrouped rows are plain");
         assert_eq!(get(&t, "a", "group_header"), None);
@@ -132,7 +167,8 @@ mod tests {
         let t = case.run();
         assert_eq!(get(&t, "h", "group_header"), Some("━━ ▸ Work · 3 ●1 ?1 ━━━━━━━━━━"));
         assert_eq!(get(&t, "a", "group_row"), None);
-        assert_eq!(get(&t, "a-wt", "group_row"), Some("⠀⠀a-wt-label  ?1"));
+        assert_eq!(get(&t, "a", "group_branch"), None);
+        assert_eq!(get(&t, "a-wt", "group_row"), Some("a-wt-label  ?1"));
         assert_eq!(get(&t, "b", "group_row"), Some("├─ b-label"));
         assert_eq!(get(&t, "c", "group_row"), None);
     }
