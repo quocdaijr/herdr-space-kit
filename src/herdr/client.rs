@@ -13,10 +13,10 @@ const TIMEOUT: Duration = Duration::from_secs(5);
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
 pub fn socket_path() -> PathBuf {
-    std::env::var_os("HERDR_SOCKET_PATH").filter(|p| !p.is_empty()).map(PathBuf::from).unwrap_or_else(|| {
-        let home = std::env::var_os("HOME").unwrap_or_default();
-        PathBuf::from(home).join(".config/herdr/herdr.sock")
-    })
+    std::env::var_os("HERDR_SOCKET_PATH")
+        .filter(|p| !p.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| crate::model::home().join(".config/herdr/herdr.sock"))
 }
 
 /// Send `method` with `params`, return the `result` object or the error message.

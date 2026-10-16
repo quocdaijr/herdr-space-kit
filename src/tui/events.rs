@@ -1,4 +1,4 @@
-//! Subscription threads (research §5: one connection per subscription set, push-only after the ack).
+//! Subscription threads: one connection per subscription set, push-only after the ack.
 //! A: lifecycle events, always on. B: `pane.agent_status_changed` for the current agent panes,
 //! respawned whenever that set changes.
 use crate::herdr::client::socket_path;
@@ -10,10 +10,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 
-pub enum Msg {
-    /// Something changed (a lifecycle/status event, or a resubscribe): refetch.
-    Event,
-}
 
 const LIFECYCLE: [&str; 24] = [
     "workspace.created", "workspace.updated", "workspace.metadata_updated", "workspace.renamed",
@@ -28,7 +24,8 @@ const RETRY: Duration = Duration::from_secs(1);
 const TICK: Duration = Duration::from_secs(1);
 const READ_CAPACITY: usize = 1 << 20;
 
-pub fn spawn_lifecycle(tx: Sender<Msg>) {
+/// Each `()` sent on `tx` means something changed (an event, or a resubscribe): refetch.
+pub fn spawn_lifecycle(tx: Sender<()>) {
     let subs: Vec<Value> = LIFECYCLE.iter().map(|t| json!({"type": t})).collect();
     std::thread::spawn(move || run(&json!({"subscriptions": subs}), &tx, &|| true));
 }
@@ -41,7 +38,7 @@ pub struct StatusSub {
 }
 
 impl StatusSub {
-    pub fn set(&mut self, panes: Vec<String>, tx: &Sender<Msg>) {
+    pub fn set(&mut self, panes: Vec<String>, tx: &Sender<()>) {
         if panes == self.panes {
             return;
         }
@@ -60,7 +57,7 @@ impl StatusSub {
 }
 
 /// Subscribe until `alive` turns false; on EOF/error/`events_lost` wait 1 s, resubscribe, invalidate.
-fn run(params: &Value, tx: &Sender<Msg>, alive: &dyn Fn() -> bool) {
+fn run(params: &Value, tx: &Sender<()>, alive: &dyn Fn() -> bool) {
     while alive() {
         if let Err(e) = stream(params, tx, alive) {
             super::log(&format!("subscription: {e}"));
@@ -69,13 +66,13 @@ fn run(params: &Value, tx: &Sender<Msg>, alive: &dyn Fn() -> bool) {
             return;
         }
         std::thread::sleep(RETRY);
-        if tx.send(Msg::Event).is_err() {
+        if tx.send(()).is_err() {
             return;
         }
     }
 }
 
-fn stream(params: &Value, tx: &Sender<Msg>, alive: &dyn Fn() -> bool) -> Result<(), String> {
+fn stream(params: &Value, tx: &Sender<()>, alive: &dyn Fn() -> bool) -> Result<(), String> {
     let mut sock = UnixStream::connect(socket_path()).map_err(|e| format!("connect: {e}"))?;
     sock.set_read_timeout(Some(TICK)).map_err(|e| e.to_string())?;
     let req = json!({"id": "space-kit:subscribe", "method": "events.subscribe", "params": params});
@@ -90,7 +87,7 @@ fn stream(params: &Value, tx: &Sender<Msg>, alive: &dyn Fn() -> bool) -> Result<
                 if let Some(err) = msg.get("error") {
                     return Err(err.to_string()); // includes `events_lost`
                 }
-                if msg["event"].is_string() && tx.send(Msg::Event).is_err()
+                if msg["event"].is_string() && tx.send(()).is_err()
                 {
                     return Ok(());
                 }

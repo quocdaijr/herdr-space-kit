@@ -16,14 +16,17 @@ use std::fs::{File, TryLockError};
 use std::path::Path;
 
 const MAX_PASSES: usize = 3;
+const FORCE: &str = "force";
 
 pub fn snapshot(api: &dyn Api) -> Result<Snapshot> {
     let mut result = api.call("session.snapshot", json!({}))?;
     serde_json::from_value(result["snapshot"].take()).map_err(|e| format!("session.snapshot: {e}"))
 }
 
-/// When a sync is already running, mark it dirty so it runs once more, and return. Interactive
-/// callers (the manager, toggle-collapse) pass `wait` to block instead.
+/// When a sync is already running, mark it dirty so it runs once more, and return; a forced
+/// request writes `force` into the marker so the rerun resends everything (the startup hook's
+/// `--force` must survive racing an event hook). Interactive callers (the manager,
+/// toggle-collapse) pass `wait` to block instead.
 pub fn sync(api: &dyn Api, state_dir: &Path, force: bool, wait: bool) -> Result<String> {
     let io = |e: std::io::Error| format!("{}: {e}", state_dir.display());
     std::fs::create_dir_all(state_dir).map_err(io)?;
@@ -35,21 +38,37 @@ pub fn sync(api: &dyn Api, state_dir: &Path, force: bool, wait: bool) -> Result<
         match lock.try_lock() {
             Ok(()) => {}
             Err(TryLockError::WouldBlock) => {
-                File::create(&dirty).map_err(io)?;
+                // Append, so a pending `force` is never overwritten by a plain request.
+                let mut marker = std::fs::OpenOptions::new().create(true).append(true).open(&dirty).map_err(io)?;
+                if force {
+                    std::io::Write::write_all(&mut marker, FORCE.as_bytes()).map_err(io)?;
+                }
                 return Ok("another sync is running; it will run again".into());
             }
             Err(TryLockError::Error(e)) => return Err(io(e)),
         }
     }
+    // A marker left by an earlier run that hit MAX_PASSES still counts.
+    let mut force = force | take_dirty(&dirty).unwrap_or(false);
     let mut summary = String::new();
-    for _ in 0..MAX_PASSES {
-        let _ = std::fs::remove_file(&dirty);
+    for pass in 1..=MAX_PASSES {
         summary = sync_once(api, state_dir, force)?;
-        if !dirty.exists() {
-            break;
+        if pass == MAX_PASSES {
+            break; // leave any new marker for the next sync
+        }
+        match take_dirty(&dirty) {
+            Some(forced) => force = forced,
+            None => break,
         }
     }
     Ok(summary)
+}
+
+/// Read and remove the dirty marker: None when absent, else whether a run asked for `force`.
+fn take_dirty(path: &Path) -> Option<bool> {
+    let marker = std::fs::read_to_string(path).ok()?;
+    let _ = std::fs::remove_file(path);
+    Some(marker.contains(FORCE))
 }
 
 fn sync_once(api: &dyn Api, state_dir: &Path, force: bool) -> Result<String> {
@@ -175,11 +194,21 @@ fn set_agent_view(api: &dyn Api, state_dir: &Path, label: &str, fresh: bool) {
     }
 }
 
-/// `workspace.focused` only matters when a group is folded or a header was clicked.
+/// `workspace.focused` only needs a sync when a group is folded or a header was clicked. A
+/// skipped event still records the workspace as `last_focused`, so a later header click returns
+/// to the right place.
 pub fn focus_needs_sync(state_dir: &Path) -> bool {
     let event = std::env::var("HERDR_PLUGIN_EVENT_JSON").unwrap_or_default();
     let sidebar = Sidebar::load(state_dir);
-    event.contains('⟦') || sidebar.header_ids.iter().any(|id| event.contains(&format!("\"{id}\""))) || !sidebar.collapsed.is_empty()
+    if event.contains('⟦') || sidebar.header_ids.iter().any(|id| event.contains(&format!("\"{id}\""))) || !sidebar.collapsed.is_empty() {
+        return true;
+    }
+    let focused = serde_json::from_str::<serde_json::Value>(&event).ok().and_then(|e| e["data"]["workspace_id"].as_str().map(str::to_owned));
+    if focused.is_some() && focused != sidebar.last_focused {
+        // Best effort: a failed write only means the next header click goes back less precisely.
+        let _ = Sidebar { last_focused: focused, ..sidebar }.save(state_dir);
+    }
+    false
 }
 
 /// Fold or unfold the group of `workspace` (a worktree folds its repo's group).
@@ -279,6 +308,31 @@ mod tests {
         std::fs::write(dir.join("gitdirs/wt/HEAD"), "ref: refs/heads/fix-1\n").unwrap();
         assert_eq!(branch_of(linked.to_str().unwrap()).as_deref(), Some("fix-1"), "a gitdir file is followed");
         assert_eq!(branch_of("/nonexistent"), None);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_forced_request_that_hits_the_lock_forces_the_rerun() {
+        let dir = setup("sync-force");
+        let lock = File::create(dir.join("sync.lock")).unwrap();
+        lock.lock().unwrap();
+        let api = Fake { snapshot: snap("p2"), ..Default::default() };
+        sync(&api, &dir, true, false).unwrap();
+        sync(&api, &dir, false, false).unwrap();
+        assert!(api.sent.borrow().is_empty(), "both calls only left a marker");
+        assert_eq!(take_dirty(&dir.join("sync.dirty")), Some(true), "the plain call kept the force");
+        drop(lock);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_skipped_focus_event_still_records_the_last_focused_workspace() {
+        let dir = setup("sync-focus");
+        // SAFETY: tests touching this variable run in this one test only.
+        unsafe { std::env::set_var("HERDR_PLUGIN_EVENT_JSON", r#"{"event":"workspace.focused","data":{"workspace_id":"p2"}}"#) };
+        assert!(!focus_needs_sync(&dir), "nothing folded: no sync");
+        assert_eq!(Sidebar::load(&dir).last_focused.as_deref(), Some("p2"));
+        unsafe { std::env::remove_var("HERDR_PLUGIN_EVENT_JSON") };
         let _ = std::fs::remove_dir_all(dir);
     }
 

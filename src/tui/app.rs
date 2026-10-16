@@ -1,5 +1,5 @@
 //! Manager state: snapshot, groups, folds, flattened rows, cursor, prompt, status line.
-use super::events::{Msg, StatusSub};
+use super::events::StatusSub;
 use super::keys::{Action, Mode};
 use crate::herdr::client;
 use crate::herdr::types::Snapshot;
@@ -34,7 +34,7 @@ pub struct App {
     pub scroll: usize,
     pub prompt: Option<Prompt>,
     pub help: bool,
-    pub tx: Sender<Msg>,
+    pub tx: Sender<()>,
     status: Option<(String, Instant)>,
     last_click: Option<(usize, Instant)>,
     status_sub: StatusSub,
@@ -42,7 +42,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(state_dir: PathBuf, tx: Sender<Msg>) -> Self {
+    pub fn new(state_dir: PathBuf, tx: Sender<()>) -> Self {
         let folds = Folds { sidebar: Sidebar::load(&state_dir), ..Default::default() };
         Self {
             state_dir,
@@ -94,11 +94,11 @@ impl App {
             Ok(snap) => self.snap = snap,
             Err(e) => self.flash(format!("snapshot: {e}")),
         }
-        if self.groups.is_none() {
-            match Groups::load(&self.state_dir, &self.snap) {
-                Ok(g) => self.groups = Some(g),
-                Err(e) => self.flash(format!("groups.json: {e}")),
-            }
+        // Reload every time: groups may have been edited elsewhere (another popup, a v1 import),
+        // and a later edit here must not overwrite that. A failed load keeps what is shown.
+        match Groups::load(&self.state_dir, &self.snap) {
+            Ok(g) => self.groups = Some(g),
+            Err(e) => self.flash(format!("groups.json: {e}")),
         }
         // Folds may change from the sidebar (header clicks, the toggle key) while the popup is open.
         self.folds.sidebar = Sidebar::load(&self.state_dir);

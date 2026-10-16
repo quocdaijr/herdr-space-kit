@@ -2,6 +2,7 @@
 use super::app::{App, Prompt};
 use crate::herdr::types::AgentStatus;
 use crate::model::tree::{Kind, Row, Tint};
+use crate::text::{clip, width};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -15,7 +16,7 @@ const HELP: [&str; 15] = [
     "Enter   jump and close",
     "Space   fold/unfold",
     "h/l     fold / unfold",
-    "H/L     fold groups/all",
+    "H / L   fold groups / unfold all",
     "n       new group",
     "r       rename group",
     "d       delete group",
@@ -55,31 +56,6 @@ fn status_color(status: AgentStatus) -> Color {
     })
 }
 
-fn width(s: &str) -> usize {
-    Span::raw(s).width()
-}
-
-/// Truncate to `w` display columns, ending in `…` when cut. Wide chars never straddle the edge.
-pub fn fit(s: &str, w: usize) -> String {
-    if width(s) <= w {
-        return s.to_owned();
-    }
-    let mut out = String::new();
-    let mut used = 0;
-    for c in s.chars() {
-        let cw = width(c.encode_utf8(&mut [0; 4]));
-        if used + cw + 1 > w {
-            break;
-        }
-        out.push(c);
-        used += cw;
-    }
-    if w > 0 {
-        out.push('…');
-    }
-    out
-}
-
 fn row_line(row: &Row, is_cursor: bool, is_marked: bool, w: usize) -> Line<'static> {
     let mut style = match &row.tint {
         Tint::Group(name) => Style::new().fg(group_color(name)),
@@ -99,8 +75,8 @@ fn row_line(row: &Row, is_cursor: bool, is_marked: bool, w: usize) -> Line<'stat
     // Space/Worktree rows carry no arrow; mark a folded one at the end.
     let folded = row.collapsed && row.kind != Kind::Group;
     let text = match folded {
-        true => fit(&row.text, w.saturating_sub(2)) + " ▸",
-        false => fit(&row.text, w),
+        true => clip(&row.text, w.saturating_sub(2)) + " ▸",
+        false => clip(&row.text, w),
     };
     let pad = " ".repeat(w.saturating_sub(width(&text)));
     Line::from(Span::styled(text + &pad, style))
@@ -137,7 +113,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         draw_picker(f, list, label, options, *idx);
     }
     if app.help {
-        let lines: Vec<Line> = HELP.iter().map(|l| Line::raw(fit(l, w.saturating_sub(2)))).collect();
+        let lines: Vec<Line> = HELP.iter().map(|l| Line::raw(clip(l, w.saturating_sub(2)))).collect();
         f.render_widget(Clear, list);
         f.render_widget(Paragraph::new(lines).block(Block::bordered().title(" keys ")), list);
     }
@@ -151,11 +127,14 @@ fn status_line(app: &App, w: usize) -> Line<'static> {
         Some(Prompt::Move { .. }) => "j/k Enter · Esc".to_owned(),
         None => match app.status_text() {
             Some(msg) => msg.to_owned(),
-            None => return Line::styled(fit("n new · m move · Space fold · Enter jump · ? help", w), Style::new().fg(DIM)),
+            None => return Line::styled(clip("n new · m move · Space fold · Enter jump · ? help", w), Style::new().fg(DIM)),
         },
     };
-    // Keep the end of a long input visible.
-    let shown = if width(&text) > w { text.chars().rev().take(w).collect::<Vec<_>>().into_iter().rev().collect() } else { text };
+    // Keep the end of a long input visible (by display columns, so wide chars never overflow).
+    let mut shown = text;
+    while width(&shown) > w {
+        shown.remove(0);
+    }
     Line::styled(shown, Style::new().fg(rgb(0xf9e2af)))
 }
 
@@ -168,10 +147,10 @@ fn draw_picker(f: &mut Frame, list: Rect, label: &str, options: &[String], idx: 
         .enumerate()
         .map(|(i, o)| {
             let style = if i == idx { Style::new().bg(CURSOR_BG).add_modifier(Modifier::BOLD) } else { Style::new() };
-            Line::styled(fit(o, inner), style)
+            Line::styled(clip(o, inner), style)
         })
         .collect();
-    let title = format!(" move {} ", fit(label, inner.saturating_sub(7)));
+    let title = format!(" move {} ", clip(label, inner.saturating_sub(7)));
     f.render_widget(Clear, area);
     f.render_widget(Paragraph::new(lines).block(Block::bordered().title(title)), area);
 }
@@ -179,31 +158,6 @@ fn draw_picker(f: &mut Frame, list: Rect, label: &str, options: &[String], idx: 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn fit_keeps_short_text() {
-        assert_eq!(fit("abc", 5), "abc");
-        assert_eq!(fit("abcde", 5), "abcde");
-    }
-
-    #[test]
-    fn fit_truncates_with_ellipsis() {
-        assert_eq!(fit("abcdef", 5), "abcd…");
-        assert_eq!(width(&fit("  ● Opus 5.5 70% a long title here", 28)), 28);
-    }
-
-    #[test]
-    fn fit_never_splits_wide_chars() {
-        // Each CJK char is 2 columns: 2 chars (4 cols) + … = 5 ≤ 6; a third would make 7.
-        assert_eq!(fit("漢字漢字", 6), "漢字…");
-        assert!(width(&fit("漢字漢字", 5)) <= 5);
-    }
-
-    #[test]
-    fn fit_degenerate_widths() {
-        assert_eq!(fit("abc", 1), "…");
-        assert_eq!(fit("abc", 0), "");
-    }
 
     #[test]
     fn draws_the_tree_and_the_status_hint() {

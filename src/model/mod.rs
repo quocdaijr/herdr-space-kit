@@ -8,13 +8,17 @@ use std::path::{Path, PathBuf};
 
 pub const PLUGIN_ID: &str = "space-kit";
 
+/// `$HOME` (empty when unset, so paths stay relative instead of panicking).
+pub fn home() -> PathBuf {
+    PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
+}
+
 /// `$HERDR_PLUGIN_STATE_DIR`, else `$XDG_STATE_HOME/herdr/plugins/space-kit`.
 pub fn state_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("HERDR_PLUGIN_STATE_DIR").filter(|d| !d.is_empty()) {
         return PathBuf::from(dir);
     }
-    let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
-    let state = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".local/state"));
+    let state = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".local/state"));
     state.join("herdr/plugins").join(PLUGIN_ID)
 }
 

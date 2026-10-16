@@ -6,15 +6,12 @@
 //! title): it never scrolls and is never highlighted, unlike rows, which belong to an agent entry.
 use serde_json::{Value, json};
 use std::io::{Read, Seek, SeekFrom};
+use crate::model::home;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const DEFAULT_LABEL: &str = "by space";
 const CODEX_TAIL_BYTES: u64 = 256 * 1024;
-
-fn home() -> PathBuf {
-    PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
-}
 
 pub fn claude_cache() -> PathBuf {
     home().join(".cache/claude-rate-limits.json")
