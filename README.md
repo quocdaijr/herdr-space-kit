@@ -141,9 +141,12 @@ space-kit record                                   cache Claude's statusline rat
 
 ```bash
 cargo test
+cargo fmt --check && cargo clippy --all-targets -- -D warnings
 cargo build --release
 herdr plugin link "$PWD"
 ```
+
+CI runs the tests on Linux and macOS, rustfmt and clippy, and reports line coverage (`cargo llvm-cov`) in the run summary.
 
 ## License
 

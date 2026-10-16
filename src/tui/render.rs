@@ -127,7 +127,12 @@ fn status_line(app: &App, w: usize) -> Line<'static> {
         Some(Prompt::Move { .. }) => "j/k Enter · Esc".to_owned(),
         None => match app.status_text() {
             Some(msg) => msg.to_owned(),
-            None => return Line::styled(clip("n new · m move · Space fold · Enter jump · ? help", w), Style::new().fg(DIM)),
+            None => {
+                return Line::styled(
+                    clip("n new · m move · Space fold · Enter jump · ? help", w),
+                    Style::new().fg(DIM),
+                );
+            }
         },
     };
     // Keep the end of a long input visible (by display columns, so wide chars never overflow).
@@ -166,8 +171,12 @@ mod tests {
         use ratatui::{Terminal, backend::TestBackend};
         let (tx, _rx) = std::sync::mpsc::channel();
         let mut app = App::new(std::env::temp_dir().join("space-kit-render"), tx);
-        let ws = |id: &str, label: &str| Workspace { workspace_id: id.into(), label: label.into(), ..Default::default() };
-        app.snap = Snapshot { workspaces: vec![ws("h", "⟦Work⟧"), ws("a", "api"), ws("b", "notes")], ..Default::default() };
+        let ws =
+            |id: &str, label: &str| Workspace { workspace_id: id.into(), label: label.into(), ..Default::default() };
+        app.snap = Snapshot {
+            workspaces: vec![ws("h", "⟦Work⟧"), ws("a", "api"), ws("b", "notes")],
+            ..Default::default()
+        };
         app.groups = Some(Groups::default().create("Work").unwrap().move_to("label:api", Some("Work")));
         app.rebuild();
         let mut terminal = Terminal::new(TestBackend::new(40, 6)).unwrap();

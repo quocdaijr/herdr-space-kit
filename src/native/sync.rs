@@ -121,14 +121,23 @@ fn sync_once(api: &dyn Api, state_dir: &Path, force: bool) -> Result<String> {
         .filter(|e| !e.worktrees.is_empty() || statuses.contains_key(e.ws.workspace_id.as_str()))
         .filter_map(|e| {
             // Herdr leaves `worktree` out for some repos; the first pane's folder still finds it.
-            let checkout = e.ws.worktree.as_ref().map(|w| w.checkout_path.as_str()).filter(|p| !p.is_empty()).or_else(|| {
-                snap.panes.iter().find(|p| p.workspace_id == e.ws.workspace_id).and_then(|p| p.cwd.as_deref())
-            })?;
+            let checkout =
+                e.ws.worktree.as_ref().map(|w| w.checkout_path.as_str()).filter(|p| !p.is_empty()).or_else(|| {
+                    snap.panes.iter().find(|p| p.workspace_id == e.ws.workspace_id).and_then(|p| p.cwd.as_deref())
+                })?;
             Some((e.ws.workspace_id.as_str(), branch_of(checkout)?))
         })
         .collect();
     let width = row_width();
-    let layout = Layout { sections: &sections, headers: &header_map, statuses: &statuses, branches: &branches, sidebar: &sidebar, focused: focused.as_deref(), width };
+    let layout = Layout {
+        sections: &sections,
+        headers: &header_map,
+        statuses: &statuses,
+        branches: &branches,
+        sidebar: &sidebar,
+        focused: focused.as_deref(),
+        width,
+    };
     let workspace_tokens = tokens(&layout);
 
     // Agents tab: workspaces in sidebar order, each titled "Group › parent › worktree".
@@ -200,10 +209,15 @@ fn set_agent_view(api: &dyn Api, state_dir: &Path, label: &str, fresh: bool) {
 pub fn focus_needs_sync(state_dir: &Path) -> bool {
     let event = std::env::var("HERDR_PLUGIN_EVENT_JSON").unwrap_or_default();
     let sidebar = Sidebar::load(state_dir);
-    if event.contains('⟦') || sidebar.header_ids.iter().any(|id| event.contains(&format!("\"{id}\""))) || !sidebar.collapsed.is_empty() {
+    if event.contains('⟦')
+        || sidebar.header_ids.iter().any(|id| event.contains(&format!("\"{id}\"")))
+        || !sidebar.collapsed.is_empty()
+    {
         return true;
     }
-    let focused = serde_json::from_str::<serde_json::Value>(&event).ok().and_then(|e| e["data"]["workspace_id"].as_str().map(str::to_owned));
+    let focused = serde_json::from_str::<serde_json::Value>(&event)
+        .ok()
+        .and_then(|e| e["data"]["workspace_id"].as_str().map(str::to_owned));
     if focused.is_some() && focused != sidebar.last_focused {
         // Best effort: a failed write only means the next header click goes back less precisely.
         let _ = Sidebar { last_focused: focused, ..sidebar }.save(state_dir);
@@ -219,7 +233,10 @@ pub fn toggle_collapse(api: &dyn Api, state_dir: &Path, workspace: Option<&str>)
     let ws = snap.workspaces.iter().find(|w| w.workspace_id == id).ok_or_else(|| format!("no workspace {id}"))?;
     let group = match headers::group_of(ws) {
         Some(header) => header.to_owned(),
-        None => groups.group_of(&PathKey::for_workspace(ws, &snap.panes)).ok_or("this workspace is not in a group")?.to_owned(),
+        None => groups
+            .group_of(&PathKey::for_workspace(ws, &snap.panes))
+            .ok_or("this workspace is not in a group")?
+            .to_owned(),
     };
     let sidebar = Sidebar::load(state_dir).toggle(&group, &groups);
     sidebar.save(state_dir).map_err(|e| format!("sidebar.json: {e}"))?;
@@ -229,7 +246,9 @@ pub fn toggle_collapse(api: &dyn Api, state_dir: &Path, workspace: Option<&str>)
 
 /// The workspace an action was invoked from.
 pub fn context_workspace_id() -> Option<String> {
-    let context = std::env::var("HERDR_PLUGIN_CONTEXT_JSON").ok().and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok());
+    let context = std::env::var("HERDR_PLUGIN_CONTEXT_JSON")
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok());
     context
         .and_then(|c| c["workspace_id"].as_str().filter(|id| !id.is_empty()).map(str::to_owned))
         .or_else(|| std::env::var("HERDR_WORKSPACE_ID").ok().filter(|id| !id.is_empty()))
@@ -298,7 +317,11 @@ mod tests {
         std::fs::write(dir.join(".git/HEAD"), "ref: refs/heads/feat/x\n").unwrap();
         assert_eq!(branch_of(dir.to_str().unwrap()).as_deref(), Some("feat/x"));
         std::fs::create_dir_all(dir.join("src/deep")).unwrap();
-        assert_eq!(branch_of(dir.join("src/deep").to_str().unwrap()).as_deref(), Some("feat/x"), "found from a subfolder");
+        assert_eq!(
+            branch_of(dir.join("src/deep").to_str().unwrap()).as_deref(),
+            Some("feat/x"),
+            "found from a subfolder"
+        );
         std::fs::write(dir.join(".git/HEAD"), "0123456789abcdef\n").unwrap();
         assert_eq!(branch_of(dir.to_str().unwrap()).as_deref(), Some("0123456"));
         let linked = dir.join("wt");
@@ -329,7 +352,12 @@ mod tests {
     fn a_skipped_focus_event_still_records_the_last_focused_workspace() {
         let dir = setup("sync-focus");
         // SAFETY: tests touching this variable run in this one test only.
-        unsafe { std::env::set_var("HERDR_PLUGIN_EVENT_JSON", r#"{"event":"workspace.focused","data":{"workspace_id":"p2"}}"#) };
+        unsafe {
+            std::env::set_var(
+                "HERDR_PLUGIN_EVENT_JSON",
+                r#"{"event":"workspace.focused","data":{"workspace_id":"p2"}}"#,
+            )
+        };
         assert!(!focus_needs_sync(&dir), "nothing folded: no sync");
         assert_eq!(Sidebar::load(&dir).last_focused.as_deref(), Some("p2"));
         unsafe { std::env::remove_var("HERDR_PLUGIN_EVENT_JSON") };

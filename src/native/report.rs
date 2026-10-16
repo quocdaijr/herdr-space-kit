@@ -36,7 +36,8 @@ fn with_clears(tokens: &Tokens, previous: Option<&Tokens>) -> Tokens {
 /// Tokens are lost on a server restart, so startup passes `force`. Returns true on a full resend.
 pub fn changed(api: &dyn Api, state_dir: &Path, workspaces: &Cache, panes: &Cache, force: bool) -> Result<bool> {
     let path = state_dir.join(CACHE);
-    let cache: Cache = std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    let cache: Cache =
+        std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
     // Forced: resend everything, but still clear tokens the cache says were reported before.
     let unchanged = |key: &str, tokens: &Tokens| !force && cache.get(key) == Some(tokens);
     let mut sent = Cache::new();
@@ -107,7 +108,9 @@ pub mod tests {
         let dir = temp_dir("report");
         let api = Fake::default();
         let panes = one("p1", &[("agent_line", Some("x"))]);
-        assert!(changed(&api, &dir, &one("w1", &[("old", Some("1")), ("group_row", Some("a"))]), &panes, false).unwrap());
+        assert!(
+            changed(&api, &dir, &one("w1", &[("old", Some("1")), ("group_row", Some("a"))]), &panes, false).unwrap()
+        );
 
         api.sent.borrow_mut().clear();
         assert!(!changed(&api, &dir, &one("w1", &[("group_row", Some("a"))]), &Cache::new(), false).unwrap());

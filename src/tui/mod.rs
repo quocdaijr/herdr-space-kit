@@ -6,7 +6,9 @@ mod keys;
 mod render;
 
 use app::{App, WHEEL_STEP};
-use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind, MouseButton, MouseEventKind};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind, MouseButton, MouseEventKind,
+};
 use keys::Mode;
 use std::io::{Write, stdout};
 use std::path::PathBuf;
@@ -25,6 +27,12 @@ pub fn run(state_dir: PathBuf) -> Result<(), String> {
 
     let mut terminal = ratatui::init();
     let _ = crossterm::execute!(stdout(), EnableMouseCapture);
+    // ratatui's panic hook restores the terminal but not mouse capture; turn it off first.
+    let restore = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = crossterm::execute!(stdout(), DisableMouseCapture);
+        restore(info);
+    }));
     let mut refetch_at: Option<Instant> = None;
     let result = loop {
         while rx.try_recv().is_ok() {
@@ -44,7 +52,9 @@ pub fn run(state_dir: PathBuf) -> Result<(), String> {
         let quit = match event::read() {
             Ok(Event::Key(key)) if key.kind == KeyEventKind::Press => app.handle(keys::map(key, app.mode())),
             Ok(Event::Mouse(m)) if app.mode() == Mode::Normal => match m.kind {
-                MouseEventKind::Down(MouseButton::Left) if usize::from(m.row) < list_h => app.click(usize::from(m.row), m.column),
+                MouseEventKind::Down(MouseButton::Left) if usize::from(m.row) < list_h => {
+                    app.click(usize::from(m.row), m.column)
+                }
                 MouseEventKind::ScrollUp => {
                     app.step(-WHEEL_STEP);
                     false

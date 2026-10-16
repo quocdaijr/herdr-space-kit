@@ -72,13 +72,24 @@ mod tests {
     use crate::herdr::types::Worktree;
 
     fn ws(id: &str, root: &str, linked: bool) -> Workspace {
-        let worktree = Worktree { repo_root: root.into(), repo_key: format!("{root}/.git"), is_linked_worktree: linked, ..Default::default() };
-        Workspace { workspace_id: id.into(), label: id.into(), worktree: Some(worktree), ..Default::default() }
+        let worktree = Worktree {
+            repo_root: root.into(),
+            repo_key: format!("{root}/.git"),
+            is_linked_worktree: linked,
+            ..Default::default()
+        };
+        Workspace { workspace_id: id.into(), label: id.into(), worktree: Some(worktree) }
     }
 
     #[test]
     fn groups_are_contiguous_worktrees_follow_parents_ungrouped_last() {
-        let all = [ws("u", "/u", false), ws("a", "/a", false), ws("b", "/b", false), ws("a-wt", "/a", true), ws("c", "/c", false)];
+        let all = [
+            ws("u", "/u", false),
+            ws("a", "/a", false),
+            ws("b", "/b", false),
+            ws("a-wt", "/a", true),
+            ws("c", "/c", false),
+        ];
         let projects: Vec<&Workspace> = all.iter().collect();
         let groups = Groups::default().create("Work").unwrap().create("Home").unwrap();
         let groups = groups.move_to("/c", Some("Work")).move_to("/a", Some("Work")).move_to("/b", Some("Home"));

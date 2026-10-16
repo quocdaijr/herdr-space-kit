@@ -39,10 +39,14 @@ impl App {
             (Action::Rename, Some(old)) => self.prompt = Some(Prompt::Rename { buf: old.clone(), old }),
             (Action::Delete, Some(name)) => self.prompt = Some(Prompt::Delete(name)),
             (Action::ReorderUp, Some(name)) => self.commit(groups.reorder(&name, -1), None, format!("moved {name} up")),
-            (Action::ReorderDown, Some(name)) => self.commit(groups.reorder(&name, 1), None, format!("moved {name} down")),
+            (Action::ReorderDown, Some(name)) => {
+                self.commit(groups.reorder(&name, 1), None, format!("moved {name} down"))
+            }
             (Action::Move, _) => self.open_move_picker(&groups),
             (Action::Clean, _) => self.clean(&groups),
-            (Action::Rename | Action::Delete | Action::ReorderUp | Action::ReorderDown, None) => self.flash("no group under cursor"),
+            (Action::Rename | Action::Delete | Action::ReorderUp | Action::ReorderDown, None) => {
+                self.flash("no group under cursor")
+            }
             _ => {}
         }
     }
@@ -161,7 +165,11 @@ mod tests {
         assert_eq!(space_at(&rows, 2).and_then(|r| r.key.as_deref()), Some("s:/a"));
         assert_eq!(space_at(&rows, 3).and_then(|r| r.key.as_deref()), Some("s:/a"));
         assert!(space_at(&rows, 0).is_none(), "group row");
-        assert_eq!(space_at(&rows, 5).and_then(|r| r.key.as_deref()), Some("s:/orphan"), "an orphan worktree moves its repo");
+        assert_eq!(
+            space_at(&rows, 5).and_then(|r| r.key.as_deref()),
+            Some("s:/orphan"),
+            "an orphan worktree moves its repo"
+        );
     }
 
     #[test]

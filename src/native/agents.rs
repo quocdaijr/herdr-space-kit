@@ -19,7 +19,13 @@ pub fn header_text(title: &str, max: usize) -> String {
 }
 
 /// Pane id → tokens. `order` is workspace ids in sidebar order; `titles` their header text.
-pub fn tokens(order: &[&str], agents: &[Agent], pane_order: &[&str], titles: &BTreeMap<&str, String>, max: usize) -> BTreeMap<String, Tokens> {
+pub fn tokens(
+    order: &[&str],
+    agents: &[Agent],
+    pane_order: &[&str],
+    titles: &BTreeMap<&str, String>,
+    max: usize,
+) -> BTreeMap<String, Tokens> {
     let rank: BTreeMap<&str, usize> = pane_order.iter().enumerate().map(|(i, p)| (*p, i)).collect();
     let mut out = BTreeMap::new();
     for (ws_index, id) in order.iter().enumerate() {
@@ -57,13 +63,24 @@ mod tests {
     use crate::herdr::types::AgentStatus;
 
     fn agent(pane: &str, ws: &str, status: AgentStatus) -> Agent {
-        Agent { pane_id: pane.into(), workspace_id: ws.into(), agent: "claude".into(), agent_status: status, terminal_title_stripped: Some("task".into()), ..Default::default() }
+        Agent {
+            pane_id: pane.into(),
+            workspace_id: ws.into(),
+            agent: "claude".into(),
+            agent_status: status,
+            terminal_title_stripped: Some("task".into()),
+        }
     }
 
     #[test]
     fn first_agent_per_workspace_carries_the_header_and_sort_follows_order() {
-        let agents = [agent("p2", "w1", AgentStatus::Working), agent("p1", "w1", AgentStatus::Idle), agent("p5", "w2", AgentStatus::Idle)];
-        let titles = BTreeMap::from([("w1", "MADP › web-app".to_owned()), ("w2", "MADP › web-app › worktree-calm".to_owned())]);
+        let agents = [
+            agent("p2", "w1", AgentStatus::Working),
+            agent("p1", "w1", AgentStatus::Idle),
+            agent("p5", "w2", AgentStatus::Idle),
+        ];
+        let titles =
+            BTreeMap::from([("w1", "MADP › web-app".to_owned()), ("w2", "MADP › web-app › worktree-calm".to_owned())]);
         let t = tokens(&["w1", "w2"], &agents, &["p1", "p2", "p5"], &titles, 30);
         assert!(t["p1"]["agent_header"].as_deref().unwrap().starts_with("━ MADP › web-app ━"));
         assert_eq!(t["p2"]["agent_header"], None);
