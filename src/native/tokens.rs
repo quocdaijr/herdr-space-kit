@@ -17,6 +17,10 @@ const PAD: &str = "⠀⠀";
 /// more line the label up with the worktree names after Herdr's own (dim) `├─` connectors. No
 /// connector of our own: a cell has one color, so it could never match Herdr's.
 const BRANCH: &str = "⠀⠀⠀";
+/// Leads a row that stays visible in a folded group (the focused one, or one blocked on you).
+const PEEK: &str = "▸ ";
+/// Ends the focused row of a folded group: it shows because it is open, not because of the fold.
+const OPEN: &str = "  (open)";
 /// Marks the main checkout among the repo's worktrees.
 const PRIMARY: &str = "[primary]";
 const RULE: &str = "━━━━━━━━━━";
@@ -44,7 +48,9 @@ fn row_tokens(header: Option<String>, row: Option<String>, branch: Option<String
 
 pub fn tokens(layout: &Layout) -> BTreeMap<String, Tokens> {
     let states = |id: &str| layout.statuses.get(id).map(Vec::as_slice).unwrap_or_default();
-    let row = |prefix: &str, label: &str, id: &str| fit_row(prefix, label, &state_counts(states(id)), layout.width);
+    let row = |prefix: &str, label: &str, id: &str, note: &str| {
+        fit_row(prefix, label, &format!("{}{note}", state_counts(states(id))), layout.width)
+    };
     let mut out = BTreeMap::new();
     for section in layout.sections {
         let n = section.entries.len();
@@ -71,10 +77,22 @@ pub fn tokens(layout: &Layout) -> BTreeMap<String, Tokens> {
             let pad = if section.group.is_some() && header_ws.is_none() && i > 0 { PAD } else { "" };
             // Herdr nests linked worktrees under their repo itself, so worktree rows need no pad.
             let rows = std::iter::once((entry.ws, format!("{pad}{tree}"))).chain(entry.worktrees.iter().map(|w| (*w, String::new())));
+            // In a folded group the focused workspace keeps its whole family showing: the repo,
+            // its main checkout and every worktree (Herdr still hides worktrees it folded itself).
+            let family_open = std::iter::once(entry.ws).chain(entry.worktrees.iter().copied()).any(|w| layout.focused == Some(w.workspace_id.as_str()));
             for (ws, prefix) in rows {
                 let id = ws.workspace_id.as_str();
-                let visible = !folded || layout.focused == Some(id) || states(id).contains(&AgentStatus::Blocked);
+                let focused = layout.focused == Some(id);
+                let visible = !folded || family_open || states(id).contains(&AgentStatus::Blocked);
                 let is_primary = ws.workspace_id == entry.ws.workspace_id;
+                // A row left showing in a folded group says so, so it does not read as unfolded.
+                let peeking = folded && visible;
+                let prefix = match (peeking, is_primary) {
+                    (false, _) => prefix,
+                    (true, true) => format!("{pad}{PEEK}"),
+                    (true, false) => PEEK.to_owned(),
+                };
+                let note = if peeking && focused { OPEN } else { "" };
                 let has_branch_row = is_primary && (!entry.worktrees.is_empty() || !states(id).is_empty());
                 let (text, branch) = match has_branch_row {
                     // The main checkout reads as one more branch, like the worktrees.
@@ -85,9 +103,9 @@ pub fn tokens(layout: &Layout) -> BTreeMap<String, Tokens> {
                         };
                         let room = layout.width.saturating_sub(2 + crate::text::width(BRANCH));
                         let branch_row = format!("{BRANCH}{}", fit_row("", &label, &state_counts(states(id)), room));
-                        (visible.then(|| fit_row(&prefix, &ws.label, "", layout.width)), visible.then_some(branch_row))
+                        (visible.then(|| fit_row(&prefix, &ws.label, note, layout.width)), visible.then_some(branch_row))
                     }
-                    false => (visible.then(|| row(&prefix, &ws.label, id)), None),
+                    false => (visible.then(|| row(&prefix, &ws.label, id, note)), None),
                 };
                 let header = (carries_header && ws.workspace_id == entry.ws.workspace_id).then(|| header.clone()).flatten();
                 out.insert(id.to_owned(), row_tokens(header, text, branch));
@@ -168,9 +186,17 @@ mod tests {
         assert_eq!(get(&t, "h", "group_header"), Some("━━ ▸ Work · 3 ●1 ?1 ━━━━━━━━━━"));
         assert_eq!(get(&t, "a", "group_row"), None);
         assert_eq!(get(&t, "a", "group_branch"), None);
-        assert_eq!(get(&t, "a-wt", "group_row"), Some("a-wt-label  ?1"));
-        assert_eq!(get(&t, "b", "group_row"), Some("├─ b-label"));
+        assert_eq!(get(&t, "a-wt", "group_row"), Some("▸ a-wt-label  ?1"), "blocked rows stay, marked as peeking");
+        assert_eq!(get(&t, "b", "group_row"), Some("▸ b-label  (open)"), "the focused row says why it shows");
         assert_eq!(get(&t, "c", "group_row"), None);
+
+        // Focusing a worktree keeps its repo, main checkout and sibling worktrees showing.
+        case.focused = Some("a-wt");
+        let t = case.run();
+        assert_eq!(get(&t, "a", "group_row"), Some("▸ a-label"));
+        assert_eq!(get(&t, "a", "group_branch"), Some("⠀⠀⠀[primary] - develop"));
+        assert_eq!(get(&t, "a-wt", "group_row"), Some("▸ a-wt-label  ?1  (open)"));
+        assert_eq!(get(&t, "b", "group_row"), None, "other families stay folded");
     }
 
     #[test]
