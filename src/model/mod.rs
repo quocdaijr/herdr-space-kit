@@ -14,12 +14,19 @@ pub fn home() -> PathBuf {
 }
 
 /// `$HERDR_PLUGIN_STATE_DIR`, else `$XDG_STATE_HOME/herdr/plugins/space-kit`.
+#[cfg(not(test))]
 pub fn state_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("HERDR_PLUGIN_STATE_DIR").filter(|d| !d.is_empty()) {
         return PathBuf::from(dir);
     }
     let state = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".local/state"));
     state.join("herdr/plugins").join(PLUGIN_ID)
+}
+
+/// Tests never write to the real state dir.
+#[cfg(test)]
+pub fn state_dir() -> PathBuf {
+    std::env::temp_dir().join(format!("space-kit-state-{}", std::process::id()))
 }
 
 /// Atomic write through a pid-named temp file in the same directory. Creates the directory.
@@ -59,5 +66,10 @@ mod tests {
     fn realpath_resolves_the_existing_ancestor_of_a_missing_path() {
         let tmp = realpath("/tmp");
         assert_eq!(realpath("/tmp/space-kit-missing/x"), format!("{tmp}/space-kit-missing/x"));
+    }
+
+    #[test]
+    fn realpath_keeps_a_relative_path_it_cannot_resolve() {
+        assert_eq!(realpath("space-kit-relative-missing"), "space-kit-relative-missing");
     }
 }

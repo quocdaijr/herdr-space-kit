@@ -93,3 +93,18 @@ impl AgentStatus {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn statuses_have_a_glyph_and_a_priority() {
+        let all =
+            [AgentStatus::Blocked, AgentStatus::Working, AgentStatus::Done, AgentStatus::Idle, AgentStatus::Unknown];
+        assert_eq!(all.map(AgentStatus::glyph), ['?', '●', '✓', '○', '·']);
+        assert_eq!(all.map(AgentStatus::priority), [0, 1, 2, 3, 4], "most urgent first");
+        let unknown: AgentStatus = serde_json::from_str("\"thinking\"").unwrap();
+        assert_eq!(unknown, AgentStatus::Unknown, "new states from Herdr read as unknown");
+    }
+}

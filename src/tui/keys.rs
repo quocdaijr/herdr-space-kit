@@ -157,4 +157,12 @@ mod tests {
         let ev = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL);
         assert_eq!(map(ev, Mode::Normal), Action::None);
     }
+
+    #[test]
+    fn unmapped_keys_do_nothing_in_input_and_pick() {
+        assert_eq!(map(k(KeyCode::Tab), Mode::Input), Action::None);
+        assert_eq!(map(k(KeyCode::Char('k')), Mode::Pick), Action::Up);
+        assert_eq!(map(k(KeyCode::Up), Mode::Pick), Action::Up);
+        assert_eq!(map(k(KeyCode::Char('x')), Mode::Pick), Action::None);
+    }
 }

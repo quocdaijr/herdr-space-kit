@@ -342,4 +342,12 @@ mod tests {
         assert_eq!(texts(&rows)[0], "▸ Work ·1 ●1");
         assert_eq!(rows.len(), 3);
     }
+
+    #[test]
+    fn an_orphan_worktree_is_a_top_level_row() {
+        let snap = Snapshot { workspaces: vec![ws("wt", "feat", "/gone", true)], ..Default::default() };
+        let rows = visible(&build(&snap, &Groups::default(), &Folds::default()));
+        assert_eq!(texts(&rows), ["▾ Ungrouped ·1", "    ⎇ feat (repo)"]);
+        assert_eq!(rows[1].kind, Kind::Worktree);
+    }
 }

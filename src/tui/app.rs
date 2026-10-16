@@ -1,7 +1,7 @@
 //! Manager state: snapshot, groups, folds, flattened rows, cursor, prompt, status line.
 use super::events::StatusSub;
 use super::keys::{Action, Mode};
-use crate::herdr::client;
+use crate::herdr::client::{Api, Socket};
 use crate::herdr::types::Snapshot;
 use crate::model::groups::Groups;
 use crate::model::sidebar::Sidebar;
@@ -24,6 +24,8 @@ pub enum Prompt {
 
 pub struct App {
     pub state_dir: PathBuf,
+    /// Herdr: the socket, or a fake in tests.
+    pub api: Box<dyn Api>,
     pub snap: Snapshot,
     /// `None` until loaded; edits are refused meanwhile so a load error never gets overwritten.
     pub groups: Option<Groups>,
@@ -46,6 +48,7 @@ impl App {
         let folds = Folds { sidebar: Sidebar::load(&state_dir), ..Default::default() };
         Self {
             state_dir,
+            api: Box::new(Socket),
             snap: Snapshot::default(),
             groups: None,
             folds,
@@ -90,7 +93,7 @@ impl App {
     }
 
     pub fn refresh(&mut self) {
-        match crate::native::sync::snapshot(&client::Socket) {
+        match crate::native::sync::snapshot(&*self.api) {
             Ok(snap) => self.snap = snap,
             Err(e) => self.flash(format!("snapshot: {e}")),
         }
@@ -157,9 +160,11 @@ impl App {
     fn jump(&mut self) -> bool {
         let Some(target) = self.rows.get(self.cursor).and_then(|r| r.target.clone()) else { return false };
         let result = match &target {
-            Target::Workspace(id) => client::request("workspace.focus", json!({"workspace_id": id})),
-            Target::Pane(id) => client::request("agent.focus", json!({"target": id}))
-                .or_else(|_| client::request("pane.focus", json!({"pane_id": id}))),
+            Target::Workspace(id) => self.api.call("workspace.focus", json!({"workspace_id": id})),
+            Target::Pane(id) => self
+                .api
+                .call("agent.focus", json!({"target": id}))
+                .or_else(|_| self.api.call("pane.focus", json!({"pane_id": id}))),
         };
         match result {
             Ok(_) => true,
@@ -238,10 +243,7 @@ impl App {
 
     /// Rewrite Herdr's sidebar from the just-saved state. Fast (~10 ms), so it runs inline.
     pub fn sync_native(&mut self) {
-        if cfg!(test) {
-            return; // unit tests must never write to the live Herdr server
-        }
-        if let Err(e) = crate::native::sync::sync(&client::Socket, &self.state_dir, false, true) {
+        if let Err(e) = crate::native::sync::sync(&*self.api, &self.state_dir, false, true) {
             self.flash(format!("sync: {e}"));
         }
     }
@@ -289,7 +291,9 @@ pub(super) mod tests {
             }],
             ..Default::default()
         };
-        app.groups = Some(Groups::default().create("Work").unwrap().move_to(key.as_str(), Some("Work")));
+        let groups = Groups::default().create("Work").unwrap().move_to(key.as_str(), Some("Work"));
+        groups.save(&app.state_dir).unwrap();
+        app.groups = Some(groups);
         app.rebuild();
         app
     }
@@ -373,5 +377,82 @@ pub(super) mod tests {
         assert_eq!(*idx, 0);
         app.flash("boom");
         assert_eq!(app.status_text(), Some("boom"));
+    }
+
+    /// A Herdr that answers every call with an error.
+    struct Down;
+
+    impl Api for Down {
+        fn call(&self, method: &str, _: serde_json::Value) -> crate::herdr::client::Result<serde_json::Value> {
+            Err(format!("{method}: herdr is down"))
+        }
+    }
+
+    fn row_at(app: &App, text: &str) -> usize {
+        app.rows.iter().position(|r| r.text.trim() == text).unwrap()
+    }
+
+    #[test]
+    fn refresh_reads_the_snapshot_groups_and_folds() {
+        let mut app = app("app-refresh");
+        Sidebar { collapsed: vec!["Work".into()], ..Default::default() }.save(&app.state_dir).unwrap();
+        app.refresh();
+        assert_eq!(app.folds.sidebar.collapsed, ["Work"], "folds made elsewhere are picked up");
+        assert_eq!(app.snap.workspaces.len(), 2, "the fake Herdr's snapshot");
+
+        std::fs::write(app.state_dir.join("groups.json"), "{broken").unwrap();
+        app.api = Box::new(Down);
+        app.refresh();
+        assert!(app.groups.is_some(), "a failed load keeps what is shown");
+        assert!(app.status_text().unwrap().starts_with("groups.json:"));
+        let log = std::fs::read_to_string(app.state_dir.join("space-kit.log")).unwrap();
+        assert!(log.contains("snapshot: session.snapshot: herdr is down"), "{log}");
+    }
+
+    #[test]
+    fn jump_focuses_the_row_and_closes_or_reports_the_failure() {
+        let mut app = app("app-jump");
+        app.cursor = row_at(&app, "● api");
+        assert!(app.handle(Action::Jump), "workspace focus worked: close");
+        app.cursor = 0;
+        assert!(!app.handle(Action::Jump), "a group row has no target");
+
+        let mut agent = app.rows[row_at(&app, "● claude")].clone();
+        agent.target = Some(Target::Pane("fail".into()));
+        app.rows.push(agent);
+        app.cursor = app.rows.len() - 1;
+        assert!(app.handle(Action::Jump), "agent.focus failed, pane.focus worked");
+
+        app.api = Box::new(Down);
+        assert!(!app.handle(Action::Jump));
+        assert_eq!(app.status_text(), Some("jump: pane.focus: herdr is down"));
+    }
+
+    #[test]
+    fn a_double_click_jumps() {
+        let mut app = app("app-double");
+        let api = row_at(&app, "● api");
+        assert!(!app.click(api, 10));
+        assert!(app.click(api, 10), "second click on the same row jumps (and closes)");
+    }
+
+    #[test]
+    fn fold_save_and_sync_failures_are_reported() {
+        let mut app = app("app-fail");
+        app.api = Box::new(Down);
+        app.cursor = 0;
+        app.handle(Action::Toggle);
+        assert!(app.status_text().unwrap().starts_with("sync: session.snapshot: herdr is down"));
+        app.state_dir = app.state_dir.join("groups.json"); // a file: nothing can be saved under it
+        app.handle(Action::Toggle);
+        assert!(app.status_text().unwrap().starts_with("sidebar.json:"));
+    }
+
+    #[test]
+    fn refresh_and_unmapped_keys() {
+        let mut app = app("app-keys");
+        assert!(!app.handle(Action::None));
+        assert!(!app.handle(Action::Refresh));
+        assert_eq!(app.snap.workspaces.len(), 2, "refreshed from the fake Herdr");
     }
 }

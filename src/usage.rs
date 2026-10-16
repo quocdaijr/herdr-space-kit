@@ -181,4 +181,22 @@ mod tests {
         assert!(!record("not json", &cache).unwrap());
         let _ = std::fs::remove_dir_all(root);
     }
+
+    #[test]
+    fn a_top_level_log_newer_than_the_date_folders_wins() {
+        let root = temp_dir("codex-flat");
+        let dated = root.join("2026/10/16/a.jsonl");
+        std::fs::create_dir_all(dated.parent().unwrap()).unwrap();
+        std::fs::write(&dated, json!({"payload": {"rate_limits": {"primary": {"used_percent": 1}}}}).to_string())
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(
+            root.join("flat.jsonl"),
+            json!({"payload": {"rate_limits": {"primary": {"used_percent": 7}}}}).to_string(),
+        )
+        .unwrap();
+        assert_eq!(latest_codex_limits(&root), Some(json!({"primary": {"used_percent": 7}})));
+        assert!(record(r#"{"rate_limits": [1]}"#, &root.join("c.json")).unwrap(), "any non-empty value counts");
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

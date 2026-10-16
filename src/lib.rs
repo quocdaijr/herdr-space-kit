@@ -5,3 +5,6 @@ pub mod native;
 pub mod text;
 pub mod tui;
 pub mod usage;
+
+#[cfg(test)]
+mod test_herdr;

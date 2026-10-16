@@ -260,4 +260,33 @@ mod tests {
         app.handle(Action::NewGroup);
         assert_eq!(app.status_text(), Some("groups not loaded; edits disabled"));
     }
+
+    #[test]
+    fn rename_prompt_unused_keys_and_save_failures() {
+        use crate::tui::app::tests::app;
+        let mut app = app("edit-saves");
+        app.cursor = 0;
+        app.handle(Action::Rename);
+        assert!(matches!(&app.prompt, Some(Prompt::Rename { old, buf }) if old == "Work" && buf == "Work"));
+        app.prompt = None;
+        app.handle(Action::Up); // not an edit: ignored
+        app.edit(Action::Char('x'));
+        assert!(app.prompt.is_none());
+
+        // sidebar.json cannot be written (a directory is in the way): the rename still saves.
+        std::fs::create_dir_all(app.state_dir.join("sidebar.json")).unwrap();
+        app.prompt = Some(Prompt::Rename { old: "Work".into(), buf: "Job".into() });
+        app.handle(Action::Submit);
+        // Flashed (and logged); the sync that follows trips on the same file and flashes after it.
+        let log = std::fs::read_to_string(app.state_dir.join("space-kit.log")).unwrap();
+        assert!(log.contains("renamed Work → Job, but sidebar.json:"), "{log}");
+        assert_eq!(Groups::load(&app.state_dir, &Default::default()).unwrap().groups[0].name, "Job");
+
+        // groups.json cannot be written: nothing changes.
+        app.state_dir = app.state_dir.join("groups.json");
+        app.handle(Action::NewGroup);
+        app.handle(Action::Char('Z'));
+        app.handle(Action::Submit);
+        assert!(app.status_text().unwrap().starts_with("save groups.json:"));
+    }
 }

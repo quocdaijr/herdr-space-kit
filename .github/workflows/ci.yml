@@ -31,6 +31,9 @@ jobs:
 
   coverage:
     runs-on: ubuntu-latest
+    # Writes the coverage badge to the `badges` branch on pushes to main.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -40,9 +43,8 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov
-      # The terminal event loop and `main` stay untested (they need a live tty or server); the rest
-      # keeps line coverage at 80% or more.
-      - run: cargo llvm-cov --locked --summary-only --fail-under-lines 80 | tee coverage.txt
+      - run: cargo llvm-cov --locked --no-report
+      - run: cargo llvm-cov report --summary-only --fail-under-lines 98 | tee coverage.txt
       - run: |
           {
             echo '### Coverage'
@@ -50,3 +52,18 @@ jobs:
             cat coverage.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish the coverage badge
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          percent=$(cargo llvm-cov report --json --summary-only | jq '.data[0].totals.lines.percent')
+          message=$(printf '%.1f%%' "$percent")
+          color=$(jq -nr --argjson p "$percent" 'if $p >= 95 then "brightgreen" elif $p >= 80 then "yellow" else "red" end')
+          mkdir -p badges
+          jq -n --arg m "$message" --arg c "$color" '{schemaVersion: 1, label: "coverage", message: $m, color: $c}' > badges/coverage.json
+          cd badges
+          git init -q -b badges
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add coverage.json
+          git commit -qm "coverage: $message"
+          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" badges

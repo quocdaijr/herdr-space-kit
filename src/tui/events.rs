@@ -99,20 +99,87 @@ fn stream(params: &Value, tx: &Sender<()>, alive: &dyn Fn() -> bool) -> Result<(
     while alive() {
         match reader.read_until(b'\n', &mut buf) {
             Ok(_) if buf.ends_with(b"\n") => {
-                let msg: Value = serde_json::from_slice(&buf).map_err(|e| format!("bad json: {e}"))?;
-                buf.clear();
-                if let Some(err) = msg.get("error") {
-                    return Err(err.to_string()); // includes `events_lost`
-                }
-                if msg["event"].is_string() && tx.send(()).is_err() {
+                if !forward(&std::mem::take(&mut buf), tx)? {
                     return Ok(());
                 }
             }
             Ok(_) => return Err("connection closed".into()),
-            // Timeout keeps the partial line in `buf`; read_until resumes appending.
-            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
-            Err(e) => return Err(format!("read: {e}")),
+            Err(e) => keep_waiting(e)?,
         }
     }
     Ok(())
+}
+
+/// Pass one pushed line on as a refetch. False when nobody listens any more; an error reply
+/// (`events_lost` included) ends the subscription.
+fn forward(line: &[u8], tx: &Sender<()>) -> Result<bool, String> {
+    let msg: Value = serde_json::from_slice(line).map_err(|e| format!("bad json: {e}"))?;
+    if let Some(err) = msg.get("error") {
+        return Err(err.to_string());
+    }
+    Ok(!msg["event"].is_string() || tx.send(()).is_ok())
+}
+
+/// A read timeout just means no event yet (the partial line stays buffered); anything else ends.
+fn keep_waiting(e: std::io::Error) -> Result<(), String> {
+    match e.kind() {
+        ErrorKind::WouldBlock | ErrorKind::TimedOut => Ok(()),
+        _ => Err(format!("read: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::mpsc;
+
+    #[test]
+    fn lines_are_forwarded_and_errors_end_the_subscription() {
+        let (tx, rx) = mpsc::channel();
+        assert_eq!(forward(br#"{"event":"pane.closed"}"#, &tx), Ok(true));
+        assert_eq!(forward(br#"{"id":"x","result":{}}"#, &tx), Ok(true), "the ack is not an event");
+        assert_eq!(rx.try_iter().count(), 1);
+        assert!(forward(br#"{"error":{"code":"events_lost"}}"#, &tx).unwrap_err().contains("events_lost"));
+        assert!(forward(b"nope", &tx).unwrap_err().starts_with("bad json"));
+        drop(rx);
+        assert_eq!(forward(br#"{"event":"pane.closed"}"#, &tx), Ok(false), "nobody listens");
+        assert_eq!(keep_waiting(ErrorKind::TimedOut.into()), Ok(()));
+        assert_eq!(keep_waiting(ErrorKind::WouldBlock.into()), Ok(()));
+        assert!(keep_waiting(ErrorKind::ConnectionReset.into()).unwrap_err().starts_with("read:"));
+    }
+
+    #[test]
+    fn a_subscription_relays_events_then_resubscribes_after_a_hangup() {
+        let (tx, rx) = mpsc::channel();
+        let passes = AtomicUsize::new(0);
+        // Alive for two streams: event + hang-up, the retry ping, a second event + hang-up.
+        let alive = || passes.fetch_add(1, Ordering::SeqCst) < 5;
+        run(&json!({"subscriptions": []}), &tx, &alive);
+        assert!(rx.try_iter().count() >= 2, "events and the resubscribe ping arrive");
+        assert_eq!(stream(&json!({}), &tx, &|| false), Ok(()), "a dead subscriber reads nothing");
+        drop(rx);
+        let ping_fails = AtomicUsize::new(0);
+        run(&json!({}), &tx, &|| ping_fails.fetch_add(1, Ordering::SeqCst) < 4); // send fails: stops
+    }
+
+    #[test]
+    fn status_subscriptions_follow_the_agent_panes() {
+        let (tx, _rx) = mpsc::channel();
+        let mut sub = StatusSub::default();
+        sub.set(vec!["a:p1".into()], &tx);
+        let first = sub.generation.load(Ordering::SeqCst);
+        sub.set(vec!["a:p1".into()], &tx);
+        assert_eq!(sub.generation.load(Ordering::SeqCst), first, "same panes: nothing restarts");
+        sub.set(Vec::new(), &tx);
+        assert_eq!(sub.generation.load(Ordering::SeqCst), first + 1, "the old thread is told to stop");
+        spawn_lifecycle(tx);
+    }
+
+    #[test]
+    fn a_quiet_subscription_waits_through_read_timeouts() {
+        let (tx, rx) = mpsc::channel();
+        assert_eq!(stream(&json!({"hold": true}), &tx, &|| true), Err("connection closed".into()));
+        assert_eq!(rx.try_iter().count(), 1, "the event after the quiet spell arrives");
+    }
 }
