@@ -197,4 +197,59 @@ mod tests {
         assert_eq!(clamp_scroll(50, 99, 100, 10), 90);
         assert_eq!(clamp_scroll(5, 3, 4, 10), 0, "short lists never scroll");
     }
+
+    fn screen(app: &mut App, w: u16, h: u16) -> Vec<String> {
+        use ratatui::{Terminal, backend::TestBackend};
+        let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+        terminal.draw(|f| draw(f, app)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        (0..h)
+            .map(|y| (0..w).map(|x| buffer[(x, y)].symbol().to_owned()).collect::<String>().trim_end().to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn status_line_shows_prompts_and_keeps_the_end_of_long_input() {
+        let mut app = crate::tui::app::tests::app("render-prompts");
+        app.prompt = Some(Prompt::NewGroup("Work".into()));
+        assert_eq!(screen(&mut app, 30, 8)[7], "new: Work▏");
+        app.prompt =
+            Some(Prompt::Rename { old: "Work".into(), buf: "漢字漢字漢字漢字漢字漢字漢字".into() });
+        // The test buffer stores the second half of a wide char as a blank cell; drop those.
+        let last = screen(&mut app, 12, 8)[7].replace(' ', "");
+        assert!(last.ends_with("字▏") && width(&last) <= 12, "{last}");
+        app.prompt = Some(Prompt::Delete("Work".into()));
+        assert_eq!(screen(&mut app, 30, 8)[7], "delete Work? y/n");
+        app.prompt = None;
+        app.note("saved");
+        assert_eq!(screen(&mut app, 30, 8)[7], "saved");
+    }
+
+    #[test]
+    fn help_and_move_picker_draw_over_the_list() {
+        let mut app = crate::tui::app::tests::app("render-overlays");
+        app.help = true;
+        let help = screen(&mut app, 40, 20).join("\n");
+        assert!(help.contains(" keys ") && help.contains("Enter   jump and close"), "{help}");
+        app.help = false;
+        app.prompt = Some(Prompt::Move {
+            path_key: "/x".into(),
+            label: "notes".into(),
+            options: vec!["Work".into(), "Ungrouped".into()],
+            idx: 1,
+        });
+        let picker = screen(&mut app, 40, 12).join("\n");
+        assert!(
+            picker.contains(" move notes ") && picker.contains("Ungrouped") && picker.contains("j/k Enter · Esc"),
+            "{picker}"
+        );
+    }
+
+    #[test]
+    fn a_folded_space_is_marked_at_the_end() {
+        let mut app = crate::tui::app::tests::app("render-folded");
+        app.cursor = 1;
+        app.handle(crate::tui::keys::Action::Collapse);
+        assert_eq!(screen(&mut app, 30, 8)[1], "  ● api ▸");
+    }
 }

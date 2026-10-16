@@ -194,4 +194,70 @@ mod tests {
         assert_eq!(Sidebar::load(&dir).collapsed, ["Job"], "a folded group stays folded after rename");
         let _ = std::fs::remove_dir_all(dir);
     }
+
+    #[test]
+    fn move_delete_reorder_and_clean_flows_save_groups() {
+        use crate::tui::app::tests::app;
+        let mut app = app("edit-flows");
+        let saved = |app: &App| Groups::load(&app.state_dir, &Default::default()).unwrap();
+
+        // m on `notes` (Ungrouped) → pick Work → it joins the group.
+        app.cursor = 5;
+        app.handle(Action::Move);
+        assert!(matches!(&app.prompt, Some(Prompt::Move { label, idx: 1, .. }) if label == "notes"));
+        app.step(-1);
+        app.handle(Action::Submit);
+        assert_eq!(saved(&app).assignments.values().filter(|g| *g == "Work").count(), 2);
+        assert_eq!(app.status_text(), Some("notes → Work"));
+
+        // A second group, reordered above Work, then deleted.
+        app.handle(Action::NewGroup);
+        "Home".chars().for_each(|c| {
+            app.handle(Action::Char(c));
+        });
+        app.handle(Action::Backspace);
+        app.handle(Action::Char('e'));
+        app.handle(Action::Submit);
+        assert_eq!(saved(&app).groups.iter().map(|g| g.name.as_str()).collect::<Vec<_>>(), ["Work", "Home"]);
+        app.cursor = 0; // Work (empty Home is not drawn)
+        app.handle(Action::ReorderDown);
+        assert_eq!(saved(&app).groups[0].name, "Home");
+        app.handle(Action::ReorderUp); // the cursor followed Work
+        assert_eq!(saved(&app).groups[0].name, "Work");
+        assert_eq!(app.status_text(), Some("moved Work up"));
+        app.cursor = 0;
+        app.handle(Action::Delete);
+        assert_eq!(app.mode(), crate::tui::keys::Mode::Confirm);
+        app.handle(Action::Submit);
+        assert_eq!(saved(&app).groups.iter().map(|g| g.name.as_str()).collect::<Vec<_>>(), ["Home"]);
+        assert!(saved(&app).assignments.is_empty(), "its members became Ungrouped");
+        app.handle(Action::Clean);
+        assert_eq!(app.status_text(), Some("clean: nothing to remove"));
+    }
+
+    #[test]
+    fn clean_drops_assignments_whose_path_is_gone() {
+        let mut app = crate::tui::app::tests::app("edit-clean");
+        app.handle(Action::Clean);
+        assert_eq!(app.status_text(), Some("clean: removed 1 assignment(s)"));
+        assert!(Groups::load(&app.state_dir, &Default::default()).unwrap().assignments.is_empty());
+    }
+
+    #[test]
+    fn edits_need_a_group_or_loaded_groups() {
+        use crate::tui::app::tests::app;
+        let mut app = app("edit-refusals");
+        app.cursor = 4; // Ungrouped
+        app.handle(Action::Rename);
+        assert_eq!(app.status_text(), Some("no group under cursor"));
+        app.cursor = 0;
+        app.handle(Action::Move);
+        assert!(app.status_text().unwrap().starts_with("move: put the cursor on a Space"));
+        app.prompt = Some(Prompt::NewGroup("Work".into()));
+        app.handle(Action::Submit);
+        assert_eq!(app.status_text(), Some("group \"Work\" already exists"));
+        app.groups = None;
+        app.handle(Action::NewGroup);
+        assert_eq!(app.status_text(), Some("groups not loaded; edits disabled"));
+    }
 }

@@ -40,8 +40,9 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov
-      # Reported, not enforced: the TUI event loop and socket client are not unit-tested.
-      - run: cargo llvm-cov --locked --summary-only | tee coverage.txt
+      # The terminal event loop and `main` stay untested (they need a live tty or server); the rest
+      # keeps line coverage at 80% or more.
+      - run: cargo llvm-cov --locked --summary-only --fail-under-lines 80 | tee coverage.txt
       - run: |
           {
             echo '### Coverage'

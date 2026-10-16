@@ -146,7 +146,7 @@ cargo build --release
 herdr plugin link "$PWD"
 ```
 
-CI runs the tests on Linux and macOS, rustfmt and clippy, and reports line coverage (`cargo llvm-cov`) in the run summary.
+CI runs the tests on Linux and macOS, rustfmt and clippy, and fails if line coverage (`cargo llvm-cov`) drops below 80%.
 
 ## License
 
