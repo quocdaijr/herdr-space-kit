@@ -1,14 +1,28 @@
 # Space Kit for Herdr
 
+[![CI](https://github.com/quocdaijr/herdr-space-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/quocdaijr/herdr-space-kit/actions/workflows/ci.yml)
+[![Herdr](https://img.shields.io/badge/herdr-%E2%89%A50.9.1-89b4fa)](https://herdr.dev/plugins/)
+[![Status](https://img.shields.io/badge/status-experimental-fab387)](#status)
+[![Rust](https://img.shields.io/badge/rust-2024-dea584?logo=rust)](Cargo.toml)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux-a6e3a1)](herdr-plugin.toml)
+[![Vibe coded](https://img.shields.io/badge/vibe--coded-Claude%20Code-cba6f7)](#status)
+[![License: MIT](https://img.shields.io/badge/license-MIT-94e2d5)](LICENSE)
+
+![Herdr with space-kit in Ghostty: grouped Spaces, the grouped Agents tab with usage, and a Claude Code pane (sample data)](docs/preview.svg)
+
 A Herdr plugin that organizes Herdr's own sidebar:
 
 - **Workspace groups in Spaces.** Each group gets an empty header workspace (`⟦Group⟧`) followed by its projects, with linked worktrees under their repo. Click a header, or press your fold key, to fold the group; the focused workspace and anything blocked on you stay visible.
-- **Agent states on every row**, e.g. `├─ web-app  ●2 ○1` (blocked `?`, working `●`, done `✓`, idle `○`).
+- **Agent states on every row**, e.g. `├─ storefront  ●2 ○1` (blocked `?`, working `●`, done `✓`, idle `○`). A workspace with worktrees or agents lists its main checkout as a `[primary] - <branch>` row, like a worktree, so its agents never mix with the worktrees'.
 - **Agents tab grouped by workspace**: a `━ Group › workspace ━` header on the first agent of each workspace, in sidebar order.
 - **Claude / Codex usage in the Agents panel title**, e.g. `✻7% 42% ◆0%` (Claude 5h and 7d, then Codex).
 - **A manager popup**: a live tree of groups → spaces → worktrees → agents to create, rename, delete, reorder and fold groups and move spaces between them.
 
 Groups are keyed by path (repo root, else first pane's cwd), so a workspace closed and reopened, or reopened after a server restart, keeps its group.
+
+## Status
+
+**Experimental and vibe-coded.** This plugin was built by prompting an AI coding agent (Claude Code), with the author steering, reviewing and testing it in daily use rather than writing it line by line. It has unit tests and runs on the author's machine, but expect rough edges, read the code before trusting it, and open an issue if something breaks. Like every Herdr plugin, it runs as your user and is not sandboxed.
 
 ## Requirements
 
@@ -18,9 +32,17 @@ Groups are keyed by path (repo root, else first pane's cwd), so a workspace clos
 ## Install
 
 ```bash
+herdr plugin install quocdaijr/herdr-space-kit
+```
+
+Or from a local checkout:
+
+```bash
 git clone https://github.com/quocdaijr/herdr-space-kit
 herdr plugin link ./herdr-space-kit
 ```
+
+The plugin is listed in the [Herdr plugin marketplace](https://herdr.dev/plugins/) through the `herdr-plugin` GitHub topic.
 
 ## Sidebar config
 
@@ -31,6 +53,7 @@ The plugin reports tokens; `~/.config/herdr/config.toml` decides how they are dr
 rows = [
   [{ token = "$group_header", fg = "#9a9eb3", bold = true, dim = false }],
   [{ token = "$group_row", fg = "#e9e9f0", bold = false, dim = false }],
+  [{ token = "$group_branch", fg = "#e9e9f0", bold = false, dim = false }],
 ]
 
 [ui.sidebar.agents]
@@ -47,6 +70,7 @@ Add `rules = [{ contains = "<group>", fg = "<color>" }]` to a cell to color it p
 |---|---|---|
 | `group_header` | header workspaces | `━━ [▸ ]Group · n[ ●N ?N] ━━━━━━━━━━` |
 | `group_row` | every workspace | the whole row as one cell: tree, name, agent counts |
+| `group_branch` | workspaces with worktrees or agents | the main checkout as its own row (`[primary] - main  ○2`), lined up with the worktree names, so its agents never mix with the worktrees' |
 | `agent_header`, `agent_line` | agent panes | Agents tab rows |
 | `agent_sort` | agent panes | sort key of the plugin's agent view |
 
