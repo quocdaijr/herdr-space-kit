@@ -2,6 +2,8 @@
 name = "space-kit"
 version = "0.7.0"
 edition = "2024"
+# File::lock / try_lock (sync.lock) are stable since 1.89.
+rust-version = "1.89"
 description = "Workspace groups, a grouped Agents tab and Claude/Codex usage for Herdr's sidebar"
 
 [[bin]]
@@ -13,8 +15,7 @@ crossterm = "0.29.0"
 ratatui = "0.30.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
-toml = "0.9"
+toml = "1"
 unicode-width = "0.2"
 
 [profile.release]
