@@ -55,7 +55,8 @@ impl<'a> Split<'a> {
 
 /// `<state_dir>/headers/<name>` with anything but `[A-Za-z0-9._-]` turned into `_`.
 pub fn folder(state_dir: &Path, group: &str) -> PathBuf {
-    let safe: String = group.chars().map(|c| if c.is_ascii_alphanumeric() || "._-".contains(c) { c } else { '_' }).collect();
+    let safe: String =
+        group.chars().map(|c| if c.is_ascii_alphanumeric() || "._-".contains(c) { c } else { '_' }).collect();
     let safe = safe.trim_matches('_');
     state_dir.join("headers").join(if safe.is_empty() { "group" } else { safe })
 }

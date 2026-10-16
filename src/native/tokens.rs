@@ -71,10 +71,13 @@ pub fn tokens(layout: &Layout) -> BTreeMap<String, Tokens> {
                 (Some(_), false) => "├─ ",
             };
             // Herdr nests linked worktrees under their repo itself, so worktree rows need no prefix.
-            let rows = std::iter::once((entry.ws, tree.to_owned())).chain(entry.worktrees.iter().map(|w| (*w, String::new())));
+            let rows =
+                std::iter::once((entry.ws, tree.to_owned())).chain(entry.worktrees.iter().map(|w| (*w, String::new())));
             // In a folded group the focused workspace keeps its whole family showing: the repo,
             // its main checkout and every worktree (Herdr still hides worktrees it folded itself).
-            let family_open = std::iter::once(entry.ws).chain(entry.worktrees.iter().copied()).any(|w| layout.focused == Some(w.workspace_id.as_str()));
+            let family_open = std::iter::once(entry.ws)
+                .chain(entry.worktrees.iter().copied())
+                .any(|w| layout.focused == Some(w.workspace_id.as_str()));
             for (ws, prefix) in rows {
                 let id = ws.workspace_id.as_str();
                 let focused = layout.focused == Some(id);
@@ -98,7 +101,10 @@ pub fn tokens(layout: &Layout) -> BTreeMap<String, Tokens> {
                         };
                         let room = layout.width.saturating_sub(2 + crate::text::width(BRANCH));
                         let branch_row = format!("{BRANCH}{}", fit_row("", &label, &state_counts(states(id)), room));
-                        (visible.then(|| fit_row(&prefix, &ws.label, note, layout.width)), visible.then_some(branch_row))
+                        (
+                            visible.then(|| fit_row(&prefix, &ws.label, note, layout.width)),
+                            visible.then_some(branch_row),
+                        )
                     }
                     false => (visible.then(|| row(&prefix, &ws.label, id, note)), None),
                 };
@@ -118,8 +124,13 @@ mod tests {
     use AgentStatus::*;
 
     fn ws(id: &str, root: &str, linked: bool) -> Workspace {
-        let worktree = Worktree { repo_root: root.into(), repo_key: format!("{root}/.git"), is_linked_worktree: linked, ..Default::default() };
-        Workspace { workspace_id: id.into(), label: format!("{id}-label"), worktree: Some(worktree), ..Default::default() }
+        let worktree = Worktree {
+            repo_root: root.into(),
+            repo_key: format!("{root}/.git"),
+            is_linked_worktree: linked,
+            ..Default::default()
+        };
+        Workspace { workspace_id: id.into(), label: format!("{id}-label"), worktree: Some(worktree) }
     }
 
     struct Case {
@@ -132,8 +143,19 @@ mod tests {
 
     impl Case {
         fn new() -> Self {
-            let all = vec![ws("a", "/a", false), ws("a-wt", "/a", true), ws("b", "/b", false), ws("c", "/c", false), ws("u", "/u", false)];
-            let groups = Groups::default().create("Work").unwrap().move_to("/a", Some("Work")).move_to("/b", Some("Work")).move_to("/c", Some("Work"));
+            let all = vec![
+                ws("a", "/a", false),
+                ws("a-wt", "/a", true),
+                ws("b", "/b", false),
+                ws("c", "/c", false),
+                ws("u", "/u", false),
+            ];
+            let groups = Groups::default()
+                .create("Work")
+                .unwrap()
+                .move_to("/a", Some("Work"))
+                .move_to("/b", Some("Work"))
+                .move_to("/c", Some("Work"));
             Self { all, groups, sidebar: Sidebar::default(), statuses: BTreeMap::new(), focused: None }
         }
 
@@ -142,7 +164,15 @@ mod tests {
             let sections = sections(&projects, &[], &self.groups);
             let headers = BTreeMap::from([("Work", "h")]);
             let branches = BTreeMap::from([("a", "develop".to_owned())]);
-            tokens(&Layout { sections: &sections, headers: &headers, statuses: &self.statuses, branches: &branches, sidebar: &self.sidebar, focused: self.focused, width: 30 })
+            tokens(&Layout {
+                sections: &sections,
+                headers: &headers,
+                statuses: &self.statuses,
+                branches: &branches,
+                sidebar: &self.sidebar,
+                focused: self.focused,
+                width: 30,
+            })
         }
     }
 

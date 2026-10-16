@@ -10,14 +10,31 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 
-
 const LIFECYCLE: [&str; 24] = [
-    "workspace.created", "workspace.updated", "workspace.metadata_updated", "workspace.renamed",
-    "workspace.moved", "workspace.reordered", "workspace.closed", "workspace.focused",
-    "worktree.created", "worktree.opened", "worktree.removed",
-    "tab.created", "tab.closed", "tab.focused", "tab.renamed", "tab.moved",
-    "pane.created", "pane.closed", "pane.updated", "pane.focused", "pane.moved", "pane.exited",
-    "pane.agent_detected", "layout.updated",
+    "workspace.created",
+    "workspace.updated",
+    "workspace.metadata_updated",
+    "workspace.renamed",
+    "workspace.moved",
+    "workspace.reordered",
+    "workspace.closed",
+    "workspace.focused",
+    "worktree.created",
+    "worktree.opened",
+    "worktree.removed",
+    "tab.created",
+    "tab.closed",
+    "tab.focused",
+    "tab.renamed",
+    "tab.moved",
+    "pane.created",
+    "pane.closed",
+    "pane.updated",
+    "pane.focused",
+    "pane.moved",
+    "pane.exited",
+    "pane.agent_detected",
+    "layout.updated",
 ];
 const RETRY: Duration = Duration::from_secs(1);
 /// Read timeout, so a superseded status thread notices within a second.
@@ -87,8 +104,7 @@ fn stream(params: &Value, tx: &Sender<()>, alive: &dyn Fn() -> bool) -> Result<(
                 if let Some(err) = msg.get("error") {
                     return Err(err.to_string()); // includes `events_lost`
                 }
-                if msg["event"].is_string() && tx.send(()).is_err()
-                {
+                if msg["event"].is_string() && tx.send(()).is_err() {
                     return Ok(());
                 }
             }

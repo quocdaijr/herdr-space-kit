@@ -226,7 +226,16 @@ impl<'a> Ctx<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn node(&self, kind: Kind, depth: u8, text: String, tint: Tint, ws: &Workspace, key: String, children: Vec<Node>) -> Node {
+    fn node(
+        &self,
+        kind: Kind,
+        depth: u8,
+        text: String,
+        tint: Tint,
+        ws: &Workspace,
+        key: String,
+        children: Vec<Node>,
+    ) -> Node {
         let row = Row {
             kind,
             depth,
@@ -278,15 +287,32 @@ mod tests {
     use crate::herdr::types::Worktree;
 
     fn ws(id: &str, label: &str, root: &str, linked: bool) -> Workspace {
-        let worktree = Worktree { repo_root: root.into(), repo_key: format!("{root}/.git"), repo_name: "repo".into(), checkout_path: format!("{root}-{id}"), is_linked_worktree: linked };
-        Workspace { workspace_id: id.into(), label: label.into(), worktree: Some(worktree), ..Default::default() }
+        let worktree = Worktree {
+            repo_root: root.into(),
+            repo_key: format!("{root}/.git"),
+            repo_name: "repo".into(),
+            checkout_path: format!("{root}-{id}"),
+            is_linked_worktree: linked,
+        };
+        Workspace { workspace_id: id.into(), label: label.into(), worktree: Some(worktree) }
     }
 
     fn snapshot() -> Snapshot {
         Snapshot {
             focused_workspace_id: Some("a".into()),
-            workspaces: vec![ws("h", "⟦Work⟧", "/h", false), ws("a", "api", "/a", false), ws("wt", "feat", "/a", true), ws("u", "notes", "/u", false)],
-            agents: vec![Agent { pane_id: "a:p1".into(), workspace_id: "a".into(), agent: "claude".into(), agent_status: AgentStatus::Working, ..Default::default() }],
+            workspaces: vec![
+                ws("h", "⟦Work⟧", "/h", false),
+                ws("a", "api", "/a", false),
+                ws("wt", "feat", "/a", true),
+                ws("u", "notes", "/u", false),
+            ],
+            agents: vec![Agent {
+                pane_id: "a:p1".into(),
+                workspace_id: "a".into(),
+                agent: "claude".into(),
+                agent_status: AgentStatus::Working,
+                ..Default::default()
+            }],
             ..Default::default()
         }
     }
@@ -299,7 +325,10 @@ mod tests {
     fn groups_then_ungrouped_without_header_workspaces() {
         let groups = Groups::default().create("Work").unwrap().move_to(&realpath("/a"), Some("Work"));
         let rows = visible(&build(&snapshot(), &groups, &Folds::default()));
-        assert_eq!(texts(&rows), ["▾ Work ·1 ●1", "  ● api", "    ● claude", "    └─ · feat", "▾ Ungrouped ·1", "    notes"]);
+        assert_eq!(
+            texts(&rows),
+            ["▾ Work ·1 ●1", "  ● api", "    ● claude", "    └─ · feat", "▾ Ungrouped ·1", "    notes"]
+        );
         assert!(rows[1].is_focused);
         assert!(!rows[4].collapsible, "Ungrouped cannot fold");
     }
@@ -307,7 +336,8 @@ mod tests {
     #[test]
     fn sidebar_folds_hide_group_members() {
         let groups = Groups::default().create("Work").unwrap().move_to(&realpath("/a"), Some("Work"));
-        let folds = Folds { sidebar: Sidebar { collapsed: vec!["Work".into()], ..Default::default() }, ..Default::default() };
+        let folds =
+            Folds { sidebar: Sidebar { collapsed: vec!["Work".into()], ..Default::default() }, ..Default::default() };
         let rows = visible(&build(&snapshot(), &groups, &folds));
         assert_eq!(texts(&rows)[0], "▸ Work ·1 ●1");
         assert_eq!(rows.len(), 3);

@@ -172,7 +172,12 @@ impl Groups {
     pub fn delete(&self, name: &str) -> Self {
         Self {
             groups: self.groups.iter().filter(|g| g.name != name).cloned().collect(),
-            assignments: self.assignments.iter().filter(|(_, g)| *g != name).map(|(k, g)| (k.clone(), g.clone())).collect(),
+            assignments: self
+                .assignments
+                .iter()
+                .filter(|(_, g)| *g != name)
+                .map(|(k, g)| (k.clone(), g.clone()))
+                .collect(),
             version: self.version,
         }
     }
@@ -201,7 +206,8 @@ impl Groups {
     pub fn clean(&self, exists: impl Fn(&Path) -> bool) -> (Self, Vec<String>) {
         let (kept, removed): (Vec<_>, Vec<_>) =
             self.assignments.iter().partition(|(k, _)| PathKey(k.to_string()).as_path().is_none_or(&exists));
-        let cleaned = Self { assignments: kept.into_iter().map(|(k, g)| (k.clone(), g.clone())).collect(), ..self.clone() };
+        let cleaned =
+            Self { assignments: kept.into_iter().map(|(k, g)| (k.clone(), g.clone())).collect(), ..self.clone() };
         (cleaned, removed.into_iter().map(|(k, _)| k.clone()).collect())
     }
 }
@@ -232,8 +238,12 @@ mod tests {
         Workspace {
             workspace_id: id.into(),
             label: label.into(),
-            worktree: root.map(|r| Worktree { repo_root: r.into(), repo_key: format!("{r}/.git"), is_linked_worktree: linked, ..Default::default() }),
-            ..Default::default()
+            worktree: root.map(|r| Worktree {
+                repo_root: r.into(),
+                repo_key: format!("{r}/.git"),
+                is_linked_worktree: linked,
+                ..Default::default()
+            }),
         }
     }
 
@@ -241,8 +251,12 @@ mod tests {
     fn path_key_prefers_repo_root_then_pane_cwd_then_label() {
         let tmp = realpath("/tmp");
         assert_eq!(PathKey::for_workspace(&ws("w1", "a", Some("/tmp"), false), &[]).as_str(), tmp);
-        assert_eq!(PathKey::for_workspace(&ws("w2", "a", Some("/tmp"), true), &[]).as_str(), tmp, "worktree shares its repo root");
-        let panes = [Pane { pane_id: "p".into(), workspace_id: "w3".into(), cwd: Some("/tmp".into()), ..Default::default() }];
+        assert_eq!(
+            PathKey::for_workspace(&ws("w2", "a", Some("/tmp"), true), &[]).as_str(),
+            tmp,
+            "worktree shares its repo root"
+        );
+        let panes = [Pane { pane_id: "p".into(), workspace_id: "w3".into(), cwd: Some("/tmp".into()) }];
         assert_eq!(PathKey::for_workspace(&ws("w3", "notes", None, false), &panes).as_str(), tmp);
         assert_eq!(PathKey::for_workspace(&ws("w3", "notes", None, false), &[]).as_str(), "label:notes");
     }

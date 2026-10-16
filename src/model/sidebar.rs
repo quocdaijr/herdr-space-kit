@@ -1,6 +1,6 @@
 //! sidebar.json: which groups are folded, plus what header clicks need (header ids, last focus).
-use super::write_atomic;
 use super::groups::Groups;
+use super::write_atomic;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
@@ -24,7 +24,10 @@ pub struct Sidebar {
 impl Sidebar {
     /// Missing or malformed file → nothing folded.
     pub fn load(state_dir: &Path) -> Self {
-        std::fs::read_to_string(state_dir.join(FILE)).ok().and_then(|raw| serde_json::from_str(&raw).ok()).unwrap_or_default()
+        std::fs::read_to_string(state_dir.join(FILE))
+            .ok()
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default()
     }
 
     pub fn save(&self, state_dir: &Path) -> io::Result<()> {
@@ -33,7 +36,8 @@ impl Sidebar {
     }
 
     pub(super) fn from_v1(session: &Value) -> Self {
-        let strings = |v: &Value| v.as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
+        let strings =
+            |v: &Value| v.as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
         Self {
             collapsed: strings(&session["collapsed"]),
             last_focused: session["last_focused"].as_str().map(str::to_owned),
