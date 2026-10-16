@@ -38,28 +38,26 @@ pub fn fit_row(prefix: &str, name: &str, suffix: &str, max: usize) -> String {
 
 const COUNTED: [AgentStatus; 4] = [AgentStatus::Blocked, AgentStatus::Working, AgentStatus::Done, AgentStatus::Idle];
 
-/// Per-state agent counts in priority order, e.g. "  ●2 ○1"; "" without agents.
-pub fn state_counts(statuses: &[AgentStatus]) -> String {
-    let parts: Vec<String> = COUNTED
+/// `lead` + one `<glyph><n>` per status in `which` that has agents; "" when none does.
+fn counts(statuses: &[AgentStatus], which: &[AgentStatus], lead: &str) -> String {
+    let parts: Vec<String> = which
         .iter()
         .filter_map(|s| {
             let n = statuses.iter().filter(|x| *x == s).count();
             (n > 0).then(|| format!("{}{n}", s.glyph()))
         })
         .collect();
-    if parts.is_empty() { String::new() } else { format!("  {}", parts.join(" ")) }
+    if parts.is_empty() { String::new() } else { format!("{lead}{}", parts.join(" ")) }
+}
+
+/// Per-state agent counts in priority order, e.g. "  ●2 ○1"; "" without agents.
+pub fn state_counts(statuses: &[AgentStatus]) -> String {
+    counts(statuses, &COUNTED, "  ")
 }
 
 /// Working and blocked counts for a folded group header, e.g. " ●2 ?1".
 pub fn rollup(statuses: &[AgentStatus]) -> String {
-    let parts: Vec<String> = [AgentStatus::Working, AgentStatus::Blocked]
-        .iter()
-        .filter_map(|s| {
-            let n = statuses.iter().filter(|x| *x == s).count();
-            (n > 0).then(|| format!("{}{n}", s.glyph()))
-        })
-        .collect();
-    if parts.is_empty() { String::new() } else { format!(" {}", parts.join(" ")) }
+    counts(statuses, &[AgentStatus::Working, AgentStatus::Blocked], " ")
 }
 
 /// Usable sidebar columns: SPACE_KIT_ROW_WIDTH, else `ui.sidebar_width` from Herdr's config minus
@@ -70,8 +68,7 @@ pub fn row_width() -> usize {
     if let Some(n) = std::env::var("SPACE_KIT_ROW_WIDTH").ok().and_then(|v| v.parse().ok()) {
         return n;
     }
-    let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
-    let configured = std::fs::read_to_string(home.join(".config/herdr/config.toml"))
+    let configured = std::fs::read_to_string(crate::model::home().join(".config/herdr/config.toml"))
         .ok()
         .and_then(|t| t.parse::<toml::Table>().ok())
         .and_then(|t| t.get("ui")?.get("sidebar_width")?.as_integer())
@@ -99,5 +96,6 @@ mod tests {
         assert_eq!(clip("abc", 1), "…");
         assert_eq!(clip("abc", 0), "");
         assert_eq!(width("漢a"), 3);
+        assert_eq!(clip("漢字漢字", 6), "漢字…", "wide chars never straddle the edge");
     }
 }

@@ -1,16 +1,11 @@
-//! Serde types for the parts of `session.snapshot` the tree uses.
+//! Serde types for the parts of `session.snapshot` space-kit reads.
 //! Every optional field defaults; unknown fields are ignored (serde default).
 use serde::Deserialize;
-use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Snapshot {
     #[serde(default)]
-    pub version: Option<String>,
-    #[serde(default)]
     pub focused_workspace_id: Option<String>,
-    #[serde(default)]
-    pub focused_tab_id: Option<String>,
     #[serde(default)]
     pub focused_pane_id: Option<String>,
     #[serde(default)]
@@ -26,8 +21,6 @@ pub struct Workspace {
     pub workspace_id: String,
     #[serde(default)]
     pub label: String,
-    #[serde(default)]
-    pub agent_status: AgentStatus,
     #[serde(default)]
     pub worktree: Option<Worktree>,
 }
@@ -61,30 +54,15 @@ pub struct Agent {
     pub pane_id: String,
     pub workspace_id: String,
     #[serde(default)]
-    pub tab_id: Option<String>,
-    #[serde(default)]
     pub terminal_title_stripped: Option<String>,
-    #[serde(default)]
-    pub tokens: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Pane {
     pub pane_id: String,
     pub workspace_id: String,
-    /// Stays the same across `pane.move`, unlike `pane_id`.
-    #[serde(default)]
-    pub terminal_id: Option<String>,
-    #[serde(default)]
-    pub tab_id: Option<String>,
     #[serde(default)]
     pub cwd: Option<String>,
-    #[serde(default)]
-    pub label: Option<String>,
-    #[serde(default)]
-    pub tokens: BTreeMap<String, String>,
-    #[serde(default)]
-    pub restore_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]

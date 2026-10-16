@@ -91,7 +91,7 @@ command = "space-kit.manage"
 description = "space kit manager"
 ```
 
-In the manager: `j`/`k` move, `Enter` jump and close, `Space` or `h`/`l` fold, `H`/`L` fold all / unfold all, `n` new group, `r` rename, `d` delete, `m` move a space to a group, `J`/`K` reorder groups, `c` clean assignments whose path is gone, `g` refresh, `?` help, `q`/`Esc` close. Click a fold arrow to fold, double-click a row to jump.
+In the manager: `j`/`k` move, `Enter` jump and close, `Space` or `h`/`l` fold, `H` fold every group, `L` unfold everything, `n` new group, `r` rename, `d` delete, `m` move a space to a group, `J`/`K` reorder groups, `c` clean assignments whose path is gone, `g` refresh, `?` help, `q`/`Esc` close. Click a fold arrow to fold, double-click a row to jump.
 
 ## Usage title
 
@@ -132,6 +132,10 @@ space-kit record                                   cache Claude's statusline rat
 - `sidebar.json`: folded groups, the last focused workspace, header workspace ids
 - `reported.json`: tokens last sent, so a sync only reports changes
 - `headers/<group>/`: the empty folders header workspaces open in
+- `view-label.txt`: the Agents panel title last set, so it is only re-sent when it changes
+- `sync.lock`, `sync.dirty`: one sync at a time; a request that finds it busy leaves the marker for a rerun
+- `groups.v1.json`: the older format, kept once after it was imported
+- `space-kit.log`: errors from the manager popup
 
 ## Development
 

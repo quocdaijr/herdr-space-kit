@@ -101,15 +101,17 @@ impl App {
         if let Err(e) = groups.save(&self.state_dir) {
             return self.flash(format!("save groups.json: {e}"));
         }
+        // The groups are saved either way; a failed sidebar.json save must stay on screen.
+        let sidebar_error = sidebar.as_ref().and_then(|s| s.save(&self.state_dir).err());
         if let Some(sidebar) = sidebar {
-            if let Err(e) = sidebar.save(&self.state_dir) {
-                self.flash(format!("sidebar.json: {e}"));
-            }
             self.folds.sidebar = sidebar;
         }
         self.groups = Some(groups);
         self.rebuild();
-        self.note(msg);
+        match sidebar_error {
+            Some(e) => self.flash(format!("{msg}, but sidebar.json: {e}")),
+            None => self.note(msg),
+        }
         self.sync_native();
     }
 }

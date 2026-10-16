@@ -11,8 +11,6 @@ use std::collections::BTreeMap;
 
 pub type Tokens = BTreeMap<String, Option<String>>;
 
-/// Braille blanks: Herdr does not trim them like spaces.
-const PAD: &str = "⠀⠀";
 /// Prefix of the main-checkout row. Herdr indents an entry's second row by two columns; three
 /// more line the label up with the worktree names after Herdr's own (dim) `├─` connectors. No
 /// connector of our own: a cell has one color, so it could never match Herdr's.
@@ -72,11 +70,8 @@ pub fn tokens(layout: &Layout) -> BTreeMap<String, Tokens> {
                 (Some(_), true) => "└─ ",
                 (Some(_), false) => "├─ ",
             };
-            // Without its header workspace (not created yet) the first entry carries the header.
-            let carries_header = header_ws.is_none() && i == 0;
-            let pad = if section.group.is_some() && header_ws.is_none() && i > 0 { PAD } else { "" };
-            // Herdr nests linked worktrees under their repo itself, so worktree rows need no pad.
-            let rows = std::iter::once((entry.ws, format!("{pad}{tree}"))).chain(entry.worktrees.iter().map(|w| (*w, String::new())));
+            // Herdr nests linked worktrees under their repo itself, so worktree rows need no prefix.
+            let rows = std::iter::once((entry.ws, tree.to_owned())).chain(entry.worktrees.iter().map(|w| (*w, String::new())));
             // In a folded group the focused workspace keeps its whole family showing: the repo,
             // its main checkout and every worktree (Herdr still hides worktrees it folded itself).
             let family_open = std::iter::once(entry.ws).chain(entry.worktrees.iter().copied()).any(|w| layout.focused == Some(w.workspace_id.as_str()));
@@ -89,7 +84,7 @@ pub fn tokens(layout: &Layout) -> BTreeMap<String, Tokens> {
                 let peeking = folded && visible;
                 let prefix = match (peeking, is_primary) {
                     (false, _) => prefix,
-                    (true, true) => format!("{pad}{PEEK}"),
+                    (true, true) => PEEK.to_owned(),
                     (true, false) => PEEK.to_owned(),
                 };
                 let note = if peeking && focused { OPEN } else { "" };
@@ -107,8 +102,7 @@ pub fn tokens(layout: &Layout) -> BTreeMap<String, Tokens> {
                     }
                     false => (visible.then(|| row(&prefix, &ws.label, id, note)), None),
                 };
-                let header = (carries_header && ws.workspace_id == entry.ws.workspace_id).then(|| header.clone()).flatten();
-                out.insert(id.to_owned(), row_tokens(header, text, branch));
+                out.insert(id.to_owned(), row_tokens(None, text, branch));
             }
         }
     }
@@ -134,20 +128,19 @@ mod tests {
         sidebar: Sidebar,
         statuses: BTreeMap<&'static str, Vec<AgentStatus>>,
         focused: Option<&'static str>,
-        with_header: bool,
     }
 
     impl Case {
         fn new() -> Self {
             let all = vec![ws("a", "/a", false), ws("a-wt", "/a", true), ws("b", "/b", false), ws("c", "/c", false), ws("u", "/u", false)];
             let groups = Groups::default().create("Work").unwrap().move_to("/a", Some("Work")).move_to("/b", Some("Work")).move_to("/c", Some("Work"));
-            Self { all, groups, sidebar: Sidebar::default(), statuses: BTreeMap::new(), focused: None, with_header: true }
+            Self { all, groups, sidebar: Sidebar::default(), statuses: BTreeMap::new(), focused: None }
         }
 
         fn run(&self) -> BTreeMap<String, Tokens> {
             let projects: Vec<&Workspace> = self.all.iter().collect();
             let sections = sections(&projects, &[], &self.groups);
-            let headers: BTreeMap<&str, &str> = if self.with_header { [("Work", "h")].into() } else { BTreeMap::new() };
+            let headers = BTreeMap::from([("Work", "h")]);
             let branches = BTreeMap::from([("a", "develop".to_owned())]);
             tokens(&Layout { sections: &sections, headers: &headers, statuses: &self.statuses, branches: &branches, sidebar: &self.sidebar, focused: self.focused, width: 30 })
         }
@@ -197,15 +190,5 @@ mod tests {
         assert_eq!(get(&t, "a", "group_branch"), Some("⠀⠀⠀[primary] - develop"));
         assert_eq!(get(&t, "a-wt", "group_row"), Some("▸ a-wt-label  ?1  (open)"));
         assert_eq!(get(&t, "b", "group_row"), None, "other families stay folded");
-    }
-
-    #[test]
-    fn without_a_header_workspace_the_first_member_carries_the_header() {
-        let mut case = Case::new();
-        case.with_header = false;
-        let t = case.run();
-        assert_eq!(get(&t, "a", "group_header"), Some("━━ Work · 3 ━━━━━━━━━━"));
-        assert_eq!(get(&t, "a", "group_row"), Some("├─ a-label"));
-        assert_eq!(get(&t, "b", "group_row"), Some("⠀⠀├─ b-label"));
     }
 }

@@ -7,7 +7,6 @@ mod render;
 
 use app::{App, WHEEL_STEP};
 use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind, MouseButton, MouseEventKind};
-use events::Msg;
 use keys::Mode;
 use std::io::{Write, stdout};
 use std::path::PathBuf;
@@ -28,7 +27,7 @@ pub fn run(state_dir: PathBuf) -> Result<(), String> {
     let _ = crossterm::execute!(stdout(), EnableMouseCapture);
     let mut refetch_at: Option<Instant> = None;
     let result = loop {
-        while let Ok(Msg::Event) = rx.try_recv() {
+        while rx.try_recv().is_ok() {
             refetch_at.get_or_insert(Instant::now() + DEBOUNCE);
         }
         if refetch_at.is_some_and(|t| Instant::now() >= t) {
