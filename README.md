@@ -3,10 +3,11 @@
 [![CI](https://github.com/quocdaijr/herdr-space-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/quocdaijr/herdr-space-kit/actions/workflows/ci.yml)
 [![Herdr](https://img.shields.io/badge/herdr-%E2%89%A50.9.1-89b4fa)](https://herdr.dev/plugins/)
 [![Status](https://img.shields.io/badge/status-experimental-fab387)](#status)
-[![Rust](https://img.shields.io/badge/rust-2024-dea584?logo=rust)](Cargo.toml)
+[![Rust](https://img.shields.io/badge/rust-%E2%89%A51.89%20%C2%B7%20edition%202024-dea584?logo=rust)](Cargo.toml)
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux-a6e3a1)](herdr-plugin.toml)
 [![Vibe coded](https://img.shields.io/badge/vibe--coded-Claude%20Code-cba6f7)](#status)
 [![License: MIT](https://img.shields.io/badge/license-MIT-94e2d5)](LICENSE)
+![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/quocdaijr/herdr-space-kit?utm_source=oss&utm_medium=github&utm_campaign=quocdaijr%2Fherdr-space-kit&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
 
 ![Herdr with space-kit in Ghostty: grouped Spaces, the grouped Agents tab with usage, and a Claude Code pane (sample data)](docs/preview.svg)
 
