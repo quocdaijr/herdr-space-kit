@@ -12,7 +12,7 @@
 
 A Herdr plugin that organizes Herdr's own sidebar:
 
-- **Workspace groups in Spaces.** Each group gets an empty header workspace (`⟦Group⟧`) followed by its projects, with linked worktrees under their repo. Click a header, or press your fold key, to fold the group; the focused workspace and anything blocked on you stay visible.
+- **Workspace groups in Spaces.** Each group gets an empty header workspace (`⟦Group⟧`) followed by its projects, with linked worktrees under their repo. Click a header, or press your fold key, to fold the group; the focused workspace (with its repo, main checkout and worktrees) and anything blocked on you stay visible, marked `▸` (the focused one also says `(open)`), so a peeking row never reads as an unfolded group. The `contains = "▸ "` rule in the config below highlights them.
 - **Agent states on every row**, e.g. `├─ storefront  ●2 ○1` (blocked `?`, working `●`, done `✓`, idle `○`). A workspace with worktrees or agents lists its main checkout as a `[primary] - <branch>` row, like a worktree, so its agents never mix with the worktrees'.
 - **Agents tab grouped by workspace**: a `━ Group › workspace ━` header on the first agent of each workspace, in sidebar order.
 - **Claude / Codex usage in the Agents panel title**, e.g. `✻7% 42% ◆0%` (Claude 5h and 7d, then Codex).
@@ -52,7 +52,7 @@ The plugin reports tokens; `~/.config/herdr/config.toml` decides how they are dr
 [ui.sidebar.spaces]
 rows = [
   [{ token = "$group_header", fg = "#9a9eb3", bold = true, dim = false }],
-  [{ token = "$group_row", fg = "#e9e9f0", bold = false, dim = false }],
+  [{ token = "$group_row", fg = "#9a9eb3", bold = false, dim = false, rules = [{ contains = "▸ ", fg = "#e9e9f0", bold = true }] }],
   [{ token = "$group_branch", fg = "#e9e9f0", bold = false, dim = false }],
 ]
 
