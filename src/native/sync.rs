@@ -32,21 +32,14 @@ pub fn sync(api: &dyn Api, state_dir: &Path, force: bool, wait: bool) -> Result<
     std::fs::create_dir_all(state_dir).map_err(io)?;
     let dirty = state_dir.join("sync.dirty");
     let lock = File::create(state_dir.join("sync.lock")).map_err(io)?;
-    if wait {
-        lock.lock().map_err(io)?;
-    } else {
-        match lock.try_lock() {
-            Ok(()) => {}
-            Err(TryLockError::WouldBlock) => {
-                // Append, so a pending `force` is never overwritten by a plain request.
-                let mut marker = std::fs::OpenOptions::new().create(true).append(true).open(&dirty).map_err(io)?;
-                if force {
-                    std::io::Write::write_all(&mut marker, FORCE.as_bytes()).map_err(io)?;
-                }
-                return Ok("another sync is running; it will run again".into());
-            }
-            Err(TryLockError::Error(e)) => return Err(io(e)),
+    let acquired = if wait { lock.lock().map(|()| true) } else { got_lock(lock.try_lock()) };
+    if !acquired.map_err(io)? {
+        // Append, so a pending `force` is never overwritten by a plain request.
+        let mut marker = std::fs::OpenOptions::new().create(true).append(true).open(&dirty).map_err(io)?;
+        if force {
+            std::io::Write::write_all(&mut marker, FORCE.as_bytes()).map_err(io)?;
         }
+        return Ok("another sync is running; it will run again".into());
     }
     // A marker left by an earlier run that hit MAX_PASSES still counts.
     let mut force = force | take_dirty(&dirty).unwrap_or(false);
@@ -62,6 +55,15 @@ pub fn sync(api: &dyn Api, state_dir: &Path, force: bool, wait: bool) -> Result<
         }
     }
     Ok(summary)
+}
+
+/// Whether `try_lock` got the lock (false: another sync holds it).
+fn got_lock(result: std::result::Result<(), TryLockError>) -> std::io::Result<bool> {
+    match result {
+        Ok(()) => Ok(true),
+        Err(TryLockError::WouldBlock) => Ok(false),
+        Err(TryLockError::Error(e)) => Err(e),
+    }
 }
 
 /// Read and remove the dirty marker: None when absent, else whether a run asked for `force`.
@@ -373,6 +375,76 @@ mod tests {
         assert_eq!(toggle_collapse(&api, &dir, Some("p1")), Err("this workspace is not in a group".into()));
         assert_eq!(toggle_collapse(&api, &dir, Some("nope")), Err("no workspace nope".into()));
         assert!(toggle_collapse(&api, &dir, None).is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_lock_result_says_whether_this_sync_runs() {
+        assert!(got_lock(Ok(())).unwrap());
+        assert!(!got_lock(Err(TryLockError::WouldBlock)).unwrap());
+        assert!(got_lock(Err(TryLockError::Error(std::io::ErrorKind::Other.into()))).is_err());
+    }
+
+    #[test]
+    fn requests_arriving_mid_sync_rerun_it_up_to_the_limit() {
+        let dir = setup("sync-reruns");
+        let marker = dir.join("sync.dirty");
+        let on_call = move |method: &str| {
+            if method == "session.snapshot" {
+                std::fs::write(&marker, "").unwrap(); // another hook asked for a sync meanwhile
+            }
+        };
+        let api = Fake { snapshot: snap("p2"), on_call: Some(Box::new(on_call)), ..Default::default() };
+        sync(&api, &dir, false, true).unwrap();
+        assert_eq!(api.methods().iter().filter(|m| *m == "session.snapshot").count(), MAX_PASSES);
+        assert!(dir.join("sync.dirty").exists(), "the last request is left for the next sync");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_header_click_without_a_known_last_project_stays_put() {
+        let dir = setup("sync-click-unknown");
+        Sidebar::default().save(&dir).unwrap();
+        let api = Fake { snapshot: snap("h1"), ..Default::default() };
+        sync(&api, &dir, true, true).unwrap();
+        assert!(!api.methods().contains(&"workspace.focus".to_owned()));
+        assert_eq!(Sidebar::load(&dir).collapsed, ["A"]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn branch_rows_titles_and_view_errors() {
+        let dir = setup("sync-branches");
+        let repo = dir.join("plain-repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join(".git/HEAD"), "ref: refs/heads/feat/x\n").unwrap();
+        let snapshot = json!({
+            "workspaces": [
+                {"workspace_id": "p2", "label": "two", "worktree": {"repo_root": "/tmp/space-kit-two", "repo_key": "/tmp/space-kit-two/.git", "checkout_path": ""}},
+                {"workspace_id": "wt", "label": "fix", "worktree": {"repo_root": "/tmp/space-kit-two", "repo_key": "/tmp/space-kit-two/.git", "is_linked_worktree": true}},
+                {"workspace_id": "pl", "label": "plain"},
+            ],
+            "panes": [{"pane_id": "pl:1", "workspace_id": "pl", "cwd": repo}, {"pane_id": "wt:1", "workspace_id": "wt"}],
+            "agents": [
+                {"pane_id": "pl:1", "workspace_id": "pl", "agent": "claude", "agent_status": "idle"},
+                {"pane_id": "wt:1", "workspace_id": "wt", "agent": "codex", "agent_status": "working"},
+            ],
+        });
+        let api = Fake { snapshot, fail: &["agent.view.set"], ..Default::default() };
+        sync(&api, &dir, true, true).unwrap(); // a failed agent view is reported, not fatal
+        let tokens = |id: &str| {
+            api.sent
+                .borrow()
+                .iter()
+                .filter(|(_, p)| p["workspace_id"] == id || p["pane_id"] == id)
+                .map(|(_, p)| p["tokens"].clone())
+                .collect::<Vec<_>>()
+        };
+        let branch_found = |t: &Value| t["group_branch"].as_str().is_some_and(|b| b.starts_with("⠀⠀⠀[primary] - f"));
+        assert!(tokens("pl").iter().any(branch_found), "branch found from the pane folder: {:?}", tokens("pl"));
+        assert!(
+            tokens("wt:1").iter().any(|t| t["agent_header"].as_str().is_some_and(|h| h.starts_with("━ A › two › fix")))
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 

@@ -303,4 +303,17 @@ mod tests {
         assert_eq!(Groups::load(&dir, &Snapshot::default()).unwrap(), groups, "second load reads v2");
         let _ = std::fs::remove_dir_all(dir);
     }
+
+    #[test]
+    fn rename_and_ungroup_edge_cases() {
+        let g = Groups::default().create("Work").unwrap().create("Home").unwrap().move_to("/a", Some("Work"));
+        assert!(g.rename("Work", "Home").is_err(), "taken");
+        assert!(g.rename("Work", " ").is_err(), "empty");
+        assert_eq!(g.rename("Gone", "New"), Err("no group \"Gone\"".into()));
+        assert!(g.move_to("/a", None).assignments.is_empty(), "None ungroups");
+        let dir = temp_dir("unreadable");
+        std::fs::create_dir_all(dir.join(FILE)).unwrap(); // a directory where the file should be
+        assert!(Groups::load(&dir, &Snapshot::default()).is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

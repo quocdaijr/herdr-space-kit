@@ -93,21 +93,3 @@ fn record() -> Result<(), String> {
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::run;
-
-    fn args(list: &[&str]) -> Vec<String> {
-        list.iter().map(|s| s.to_string()).collect()
-    }
-
-    #[test]
-    fn bad_arguments_fail_with_the_usage() {
-        assert!(run(&[]).unwrap_err().starts_with("usage: space-kit"));
-        assert!(run(&args(&["bogus"])).unwrap_err().starts_with("unknown command bogus"));
-        assert!(run(&args(&["sync", "--fast"])).unwrap_err().starts_with("unknown argument --fast"));
-        assert!(run(&args(&["toggle-collapse", "w1"])).unwrap_err().starts_with("usage:"));
-        assert!(run(&args(&["help"])).is_ok());
-    }
-}

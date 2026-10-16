@@ -1,6 +1,7 @@
 # Space Kit for Herdr
 
 [![CI](https://github.com/quocdaijr/herdr-space-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/quocdaijr/herdr-space-kit/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/quocdaijr/herdr-space-kit/badges/coverage.json)](https://github.com/quocdaijr/herdr-space-kit/actions/workflows/ci.yml)
 [![Herdr](https://img.shields.io/badge/herdr-%E2%89%A50.9.1-89b4fa)](https://herdr.dev/plugins/)
 [![Status](https://img.shields.io/badge/status-experimental-fab387)](#status)
 [![Rust](https://img.shields.io/badge/rust-%E2%89%A51.89%20%C2%B7%20edition%202024-dea584?logo=rust)](Cargo.toml)
@@ -146,7 +147,7 @@ cargo build --release
 herdr plugin link "$PWD"
 ```
 
-CI runs the tests on Linux and macOS, rustfmt and clippy, and fails if line coverage (`cargo llvm-cov`) drops below 80%.
+CI runs the tests on Linux and macOS, rustfmt and clippy, and fails if line coverage (`cargo llvm-cov`) drops below 98%; the coverage badge is refreshed from `main`. Every line runs in the tests; what the line metric still misses is error handling for failures a test cannot cause safely (a socket refusing a read timeout, `current_exe` failing). Tests never touch a live Herdr: unit tests talk to a fake socket, and `tests/cli.rs` runs the binary against one with a temp `HOME` and state dir.
 
 ## License
 

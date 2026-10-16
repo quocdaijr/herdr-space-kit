@@ -72,15 +72,27 @@ pub mod tests {
     use serde_json::Value;
     use std::cell::RefCell;
 
+    pub type OnCall = Box<dyn Fn(&str)>;
+
     #[derive(Default)]
     pub struct Fake {
         pub sent: RefCell<Vec<(String, Value)>>,
         pub snapshot: Value,
+        /// Methods that answer with an error.
+        pub fail: &'static [&'static str],
+        /// Runs on every call (e.g. to play another sync arriving meanwhile).
+        pub on_call: Option<OnCall>,
     }
 
     impl Api for Fake {
         fn call(&self, method: &str, params: Value) -> Result<Value> {
             self.sent.borrow_mut().push((method.to_owned(), params));
+            if let Some(hook) = &self.on_call {
+                hook(method);
+            }
+            if self.fail.contains(&method) {
+                return Err(format!("{method}: refused"));
+            }
             Ok(if method == "session.snapshot" { json!({"snapshot": self.snapshot}) } else { json!({}) })
         }
     }

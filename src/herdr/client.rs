@@ -12,11 +12,19 @@ const READ_CAPACITY: usize = 1 << 20; // snapshot lines are ~100 KB
 const TIMEOUT: Duration = Duration::from_secs(5);
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
+/// `$HERDR_SOCKET_PATH`, else `~/.config/herdr/herdr.sock`.
+#[cfg(not(test))]
 pub fn socket_path() -> PathBuf {
     std::env::var_os("HERDR_SOCKET_PATH")
         .filter(|p| !p.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| crate::model::home().join(".config/herdr/herdr.sock"))
+}
+
+/// Tests always talk to the fake Herdr, never to a live server.
+#[cfg(test)]
+pub fn socket_path() -> PathBuf {
+    crate::test_herdr::socket()
 }
 
 /// Send `method` with `params`, return the `result` object or the error message.

@@ -246,6 +246,13 @@ mod tests {
     }
 
     #[test]
+    fn every_status_has_its_own_color() {
+        use crate::herdr::types::AgentStatus::*;
+        let colors = [Blocked, Working, Done, Idle, Unknown].map(status_color);
+        assert!(colors.iter().enumerate().all(|(i, c)| !colors[..i].contains(c)), "{colors:?}");
+    }
+
+    #[test]
     fn a_folded_space_is_marked_at_the_end() {
         let mut app = crate::tui::app::tests::app("render-folded");
         app.cursor = 1;
