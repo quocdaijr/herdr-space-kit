@@ -1,0 +1,85 @@
+id = "space-kit"
+name = "Space Kit"
+version = "0.7.0"
+min_herdr_version = "0.9.1"
+description = "Workspace groups, a grouped Agents tab and Claude/Codex usage for Herdr's sidebar"
+platforms = ["linux", "macos"]
+
+[[build]]
+command = ["cargo", "build", "--release"]
+
+# Tokens and agent views are lost on a server restart, so startup resends everything.
+[[startup]]
+command = ["./target/release/space-kit", "sync", "--quiet", "--force"]
+
+[[actions]]
+id = "manage"
+title = "Manage workspace groups"
+contexts = ["workspace"]
+command = ["./target/release/space-kit", "open"]
+
+[[actions]]
+id = "sync"
+title = "Sync workspace groups"
+contexts = ["workspace"]
+command = ["./target/release/space-kit", "sync"]
+
+[[actions]]
+id = "toggle-collapse"
+title = "Collapse or expand this workspace's group"
+contexts = ["workspace"]
+command = ["./target/release/space-kit", "toggle-collapse"]
+
+# Pane commands resolve on PATH, not the plugin root, hence `sh -c exec`.
+[[panes]]
+id = "manager"
+title = "Space Kit"
+placement = "popup"
+width = "60%"
+height = "80%"
+command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/target/release/space-kit\" manage"]
+
+# Every hook runs the same coalesced sync: one at a time, extra triggers merge into one rerun.
+[[events]]
+on = "workspace.created"
+command = ["./target/release/space-kit", "sync", "--quiet"]
+
+[[events]]
+on = "workspace.closed"
+command = ["./target/release/space-kit", "sync", "--quiet"]
+
+[[events]]
+on = "workspace.reordered"
+command = ["./target/release/space-kit", "sync", "--quiet"]
+
+[[events]]
+on = "workspace.renamed"
+command = ["./target/release/space-kit", "sync", "--quiet"]
+
+[[events]]
+on = "workspace.focused"
+command = ["./target/release/space-kit", "sync", "--quiet", "--on-focus"]
+
+[[events]]
+on = "worktree.created"
+command = ["./target/release/space-kit", "sync", "--quiet"]
+
+[[events]]
+on = "worktree.removed"
+command = ["./target/release/space-kit", "sync", "--quiet"]
+
+[[events]]
+on = "pane.agent_detected"
+command = ["./target/release/space-kit", "sync", "--quiet"]
+
+[[events]]
+on = "pane.agent_status_changed"
+command = ["./target/release/space-kit", "sync", "--quiet"]
+
+[[events]]
+on = "pane.exited"
+command = ["./target/release/space-kit", "sync", "--quiet"]
+
+[[events]]
+on = "pane.closed"
+command = ["./target/release/space-kit", "sync", "--quiet"]
