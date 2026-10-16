@@ -77,7 +77,7 @@ impl StatusSub {
 fn run(params: &Value, tx: &Sender<()>, alive: &dyn Fn() -> bool) {
     while alive() {
         if let Err(e) = stream(params, tx, alive) {
-            super::log(&format!("subscription: {e}"));
+            super::log(&crate::model::state_dir(), &format!("subscription: {e}"));
         }
         if !alive() {
             return;

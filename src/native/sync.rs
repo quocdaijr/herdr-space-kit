@@ -365,6 +365,18 @@ mod tests {
     }
 
     #[test]
+    fn toggle_collapse_folds_the_group_of_a_member_or_its_header() {
+        let dir = setup("sync-toggle");
+        let api = Fake { snapshot: snap("p2"), ..Default::default() };
+        assert_eq!(toggle_collapse(&api, &dir, Some("p2")).unwrap(), "A: collapsed");
+        assert_eq!(toggle_collapse(&api, &dir, Some("h1")).unwrap(), "A: expanded", "a header toggles its group");
+        assert_eq!(toggle_collapse(&api, &dir, Some("p1")), Err("this workspace is not in a group".into()));
+        assert_eq!(toggle_collapse(&api, &dir, Some("nope")), Err("no workspace nope".into()));
+        assert!(toggle_collapse(&api, &dir, None).is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn second_sync_reports_nothing_new() {
         let dir = setup("sync-cache");
         let api = Fake { snapshot: snap("p2"), ..Default::default() };

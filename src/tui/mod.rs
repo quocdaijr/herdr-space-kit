@@ -78,8 +78,8 @@ pub fn run(state_dir: PathBuf) -> Result<(), String> {
 
 /// Append to `<state_dir>/space-kit.log`; stderr would draw over the TUI.
 /// ponytail: unbounded file, rotate if it ever grows.
-pub(crate) fn log(msg: &str) {
-    let path = crate::model::state_dir().join("space-kit.log");
+pub(crate) fn log(state_dir: &std::path::Path, msg: &str) {
+    let path = state_dir.join("space-kit.log");
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
         let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
         let _ = writeln!(f, "{secs} {msg}");

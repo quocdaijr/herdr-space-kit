@@ -76,7 +76,7 @@ impl App {
     /// Error: status line for ~3 s plus the log file.
     pub fn flash(&mut self, msg: impl Into<String>) {
         let msg = msg.into();
-        super::log(&msg);
+        super::log(&self.state_dir, &msg);
         self.note(msg);
     }
 
@@ -244,5 +244,134 @@ impl App {
         if let Err(e) = crate::native::sync::sync(&client::Socket, &self.state_dir, false, true) {
             self.flash(format!("sync: {e}"));
         }
+    }
+}
+
+#[cfg(test)]
+pub(super) mod tests {
+    use super::*;
+    use crate::herdr::types::{Agent, AgentStatus, Workspace, Worktree};
+    use crate::model::groups::PathKey;
+
+    fn ws(id: &str, label: &str, root: &str, linked: bool) -> Workspace {
+        let worktree = Worktree {
+            repo_root: root.into(),
+            repo_key: format!("{root}/.git"),
+            repo_name: "repo".into(),
+            checkout_path: format!("{root}-{id}"),
+            is_linked_worktree: linked,
+        };
+        Workspace { workspace_id: id.into(), label: label.into(), worktree: Some(worktree) }
+    }
+
+    /// An app on a temp state dir: group Work holds `api` (one agent, one worktree); `notes` is
+    /// ungrouped. Rows: Work, api, its agent, its worktree, Ungrouped, notes.
+    pub fn app(name: &str) -> App {
+        let dir = crate::native::report::tests::temp_dir(name);
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut app = App::new(dir, tx);
+        let api = ws("a", "api", "/space-kit-app/api", false);
+        let key = PathKey::for_workspace(&api, &[]);
+        app.snap = Snapshot {
+            focused_workspace_id: Some("a".into()),
+            workspaces: vec![
+                ws("h", "⟦Work⟧", "/space-kit-app/h", false),
+                api,
+                ws("wt", "feat", "/space-kit-app/api", true),
+                ws("n", "notes", "/space-kit-app/n", false),
+            ],
+            agents: vec![Agent {
+                pane_id: "a:p1".into(),
+                workspace_id: "a".into(),
+                agent: "claude".into(),
+                agent_status: AgentStatus::Working,
+                terminal_title_stripped: None,
+            }],
+            ..Default::default()
+        };
+        app.groups = Some(Groups::default().create("Work").unwrap().move_to(key.as_str(), Some("Work")));
+        app.rebuild();
+        app
+    }
+
+    fn texts(app: &App) -> Vec<String> {
+        app.rows.iter().map(|r| r.text.trim().to_owned()).collect()
+    }
+
+    #[test]
+    fn rows_cursor_and_modes() {
+        let mut app = app("app-modes");
+        assert_eq!(texts(&app), ["▾ Work ·1 ●1", "● api", "● claude", "└─ · feat", "▾ Ungrouped ·1", "notes"]);
+        assert_eq!(app.mode(), Mode::Normal);
+        app.handle(Action::Up);
+        assert_eq!(app.cursor, 0, "the cursor stops at the top");
+        (0..10).for_each(|_| app.step(1));
+        assert_eq!(app.cursor, 5, "and at the bottom");
+        assert!(!app.handle(Action::Help));
+        assert_eq!(app.mode(), Mode::Help);
+        app.handle(Action::Help);
+        app.prompt = Some(Prompt::Delete("Work".into()));
+        assert_eq!(app.mode(), Mode::Confirm);
+        app.handle(Action::Cancel);
+        assert!(app.prompt.is_none());
+        assert!(app.handle(Action::Quit));
+    }
+
+    #[test]
+    fn folding_a_group_saves_it_for_the_sidebar() {
+        let mut app = app("app-group-fold");
+        app.cursor = 0;
+        app.handle(Action::Toggle);
+        assert_eq!(Sidebar::load(&app.state_dir).collapsed, ["Work"]);
+        assert_eq!(texts(&app), ["▸ Work ·1 ●1", "▾ Ungrouped ·1", "notes"]);
+        app.handle(Action::Collapse);
+        assert_eq!(Sidebar::load(&app.state_dir).collapsed, ["Work"], "folding a folded group is a no-op");
+        app.handle(Action::Expand);
+        assert!(Sidebar::load(&app.state_dir).collapsed.is_empty());
+        app.cursor = 4;
+        app.handle(Action::Toggle);
+        assert!(Sidebar::load(&app.state_dir).collapsed.is_empty(), "Ungrouped cannot fold");
+    }
+
+    #[test]
+    fn space_folds_stay_in_the_popup_and_fold_all_unfolds_them() {
+        let mut app = app("app-space-fold");
+        app.cursor = 1;
+        app.handle(Action::Collapse);
+        assert_eq!(texts(&app), ["▾ Work ·1 ●1", "● api", "▾ Ungrouped ·1", "notes"]);
+        assert!(Sidebar::load(&app.state_dir).collapsed.is_empty(), "space folds are not saved");
+        app.handle(Action::CollapseAll);
+        assert_eq!(Sidebar::load(&app.state_dir).collapsed, ["Work"]);
+        app.handle(Action::ExpandAll);
+        assert!(app.folds.spaces.is_empty() && Sidebar::load(&app.state_dir).collapsed.is_empty());
+        assert_eq!(app.rows.len(), 6);
+    }
+
+    #[test]
+    fn clicks_select_rows_and_the_arrow_folds() {
+        let mut app = app("app-click");
+        assert!(!app.click(5, 10));
+        assert_eq!(app.cursor, 5, "a click selects the row");
+        assert!(!app.click(9, 0), "below the list: nothing");
+        assert!(!app.click(0, 0), "the group arrow folds");
+        assert_eq!(Sidebar::load(&app.state_dir).collapsed, ["Work"]);
+    }
+
+    #[test]
+    fn the_move_picker_steps_within_its_options() {
+        let mut app = app("app-picker");
+        app.prompt = Some(Prompt::Move {
+            path_key: "/x".into(),
+            label: "notes".into(),
+            options: vec!["Work".into(), "Ungrouped".into()],
+            idx: 0,
+        });
+        assert_eq!(app.mode(), Mode::Pick);
+        app.step(5);
+        app.step(-1);
+        let Some(Prompt::Move { idx, .. }) = &app.prompt else { panic!() };
+        assert_eq!(*idx, 0);
+        app.flash("boom");
+        assert_eq!(app.status_text(), Some("boom"));
     }
 }
