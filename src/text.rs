@@ -50,12 +50,12 @@ fn counts(statuses: &[AgentStatus], which: &[AgentStatus], lead: &str) -> String
     if parts.is_empty() { String::new() } else { format!("{lead}{}", parts.join(" ")) }
 }
 
-/// Per-state agent counts in priority order, e.g. "  ●2 ○1"; "" without agents.
+/// Per-state agent counts in priority order, e.g. "  ◐2 ○1" (symbols); "" without agents.
 pub fn state_counts(statuses: &[AgentStatus]) -> String {
     counts(statuses, &COUNTED, "  ")
 }
 
-/// Working and blocked counts for a folded group header, e.g. " ●2 ?1".
+/// Working and blocked counts for a folded group header, e.g. " ◐2 ×1" (symbols).
 pub fn rollup(statuses: &[AgentStatus]) -> String {
     counts(statuses, &[AgentStatus::Working, AgentStatus::Blocked], " ")
 }
@@ -68,11 +68,8 @@ pub fn row_width() -> usize {
     if let Some(n) = std::env::var("SPACE_KIT_ROW_WIDTH").ok().and_then(|v| v.parse().ok()) {
         return n;
     }
-    let configured = std::fs::read_to_string(crate::model::home().join(".config/herdr/config.toml"))
-        .ok()
-        .and_then(|t| t.parse::<toml::Table>().ok())
-        .and_then(|t| t.get("ui")?.get("sidebar_width")?.as_integer())
-        .unwrap_or(DEFAULT);
+    let configured =
+        crate::model::herdr_config().and_then(|t| t.get("ui")?.get("sidebar_width")?.as_integer()).unwrap_or(DEFAULT);
     usize::try_from(configured - 1).unwrap_or(0).max(MIN)
 }
 
@@ -85,7 +82,7 @@ mod tests {
     fn counts_follow_priority_and_skip_missing() {
         assert_eq!(state_counts(&[Idle, Working, Working]), "  ●2 ○1");
         assert_eq!(state_counts(&[Unknown]), "");
-        assert_eq!(rollup(&[Working, Idle, Blocked, Working]), " ●2 ?1");
+        assert_eq!(rollup(&[Working, Idle, Blocked, Working]), " ●2 ●1", "dots mode: working before blocked");
         assert_eq!(rollup(&[Idle]), "");
     }
 

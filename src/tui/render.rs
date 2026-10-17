@@ -51,7 +51,7 @@ fn status_color(status: AgentStatus) -> Color {
         AgentStatus::Blocked => 0xf38ba8,
         AgentStatus::Working => 0xf9e2af,
         AgentStatus::Done => 0x94e2d5,
-        AgentStatus::Idle => 0x9a9eb3,
+        AgentStatus::Idle => 0xa6e3a1,
         AgentStatus::Unknown => 0x585b70,
     })
 }
@@ -74,12 +74,23 @@ fn row_line(row: &Row, is_cursor: bool, is_marked: bool, w: usize) -> Line<'stat
     }
     // Space/Worktree rows carry no arrow; mark a folded one at the end.
     let folded = row.collapsed && row.kind != Kind::Group;
+    let counts = row.counts_text();
+    let room = w.saturating_sub(width(&counts));
     let text = match folded {
-        true => clip(&row.text, w.saturating_sub(2)) + " ▸",
-        false => clip(&row.text, w),
+        true => clip(&row.text, room.saturating_sub(2)) + " ▸",
+        false => clip(&row.text, room),
     };
-    let pad = " ".repeat(w.saturating_sub(width(&text)));
-    Line::from(Span::styled(text + &pad, style))
+    let pad = " ".repeat(room.saturating_sub(width(&text)));
+    // Each count in its status colour: in dots mode the glyphs alone look the same.
+    let count_spans =
+        row.counts.iter().map(|(s, n)| Span::styled(format!(" {}{n}", s.glyph()), style.fg(status_color(*s))));
+    Line::from(
+        [Span::styled(text, style)]
+            .into_iter()
+            .chain(count_spans)
+            .chain([Span::styled(pad, style)])
+            .collect::<Vec<_>>(),
+    )
 }
 
 /// Keep the cursor inside the `height`-row window.
@@ -258,5 +269,19 @@ mod tests {
         app.cursor = 1;
         app.handle(crate::tui::keys::Action::Collapse);
         assert_eq!(screen(&mut app, 30, 8)[1], "  ● api ▸");
+    }
+
+    #[test]
+    fn group_counts_take_their_status_color() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let mut app = crate::tui::app::tests::app("render-counts");
+        let mut terminal = Terminal::new(TestBackend::new(30, 8)).unwrap();
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let line: String = (0..30).map(|x| buffer[(x, 0)].symbol().to_owned()).collect();
+        assert_eq!(line.trim_end(), "▾ Work ·1 ●1");
+        let dot = line.chars().position(|c| c == '●').unwrap() as u16;
+        assert_eq!(buffer[(dot, 0)].fg, status_color(AgentStatus::Working), "dots alone can't tell states apart");
+        assert_ne!(buffer[(2, 0)].fg, status_color(AgentStatus::Working), "the name keeps the group colour");
     }
 }

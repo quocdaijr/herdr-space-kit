@@ -15,7 +15,7 @@
 A Herdr plugin that organizes Herdr's own sidebar:
 
 - **Workspace groups in Spaces.** Each group gets an empty header workspace (`⟦Group⟧`) followed by its projects, with linked worktrees under their repo. Click a header, or press your fold key, to fold the group; the focused workspace (with its repo, main checkout and worktrees) and anything blocked on you stay visible, marked `▸` (the focused one also says `(open)`), so a peeking row never reads as an unfolded group. The `contains = "▸ "` rule in the config below highlights them.
-- **Agent states on every row**, e.g. `├─ storefront  ●2 ○1` (blocked `?`, working `●`, done `✓`, idle `○`). A workspace with worktrees or agents lists its main checkout as a `[primary] - <branch>` row, like a worktree, so its agents never mix with the worktrees'.
+- **Agent states on every row**, e.g. `├─ storefront  ◐2 ○1`, drawn with the same icons as Herdr's `ui.status_indicators` setting (symbols: blocked `×`, working `◐`, done `✓`, idle `○`; dots: `●` for blocked, working and done). A workspace with worktrees or agents lists its main checkout as a `[primary] - <branch>` row, like a worktree, so its agents never mix with the worktrees'.
 - **Agents tab grouped by workspace**: a `━ Group › workspace ━` header on the first agent of each workspace, in sidebar order.
 - **Claude / Codex usage in the Agents panel title**, e.g. `✻7% 42% ◆0%` (Claude 5h and 7d, then Codex).
 - **A manager popup**: a live tree of groups → spaces → worktrees → agents to create, rename, delete, reorder and fold groups and move spaces between them.
@@ -70,7 +70,7 @@ Add `rules = [{ contains = "<group>", fg = "<color>" }]` to a cell to color it p
 
 | Token | On | Value |
 |---|---|---|
-| `group_header` | header workspaces | `━━ [▸ ]Group · n[ ●N ?N] ━━━━━━━━━━` |
+| `group_header` | header workspaces | `━━ [▸ ]Group · n[ ◐N ×N] ━━━━━━━━━━` (working, blocked; `●N ●N` in dots mode) |
 | `group_row` | every workspace | the whole row as one cell: tree, name, agent counts |
 | `group_branch` | workspaces with worktrees or agents | the main checkout as its own row (`[primary] - main  ○2`), lined up with the worktree names, so its agents never mix with the worktrees' |
 | `agent_header`, `agent_line` | agent panes | Agents tab rows |
