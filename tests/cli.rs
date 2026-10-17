@@ -248,8 +248,17 @@ fn record_without_a_change_does_not_sync_and_row_width_can_be_set() {
         child.stdin.take().unwrap().write_all(same.as_bytes()).unwrap();
         assert!(child.wait().unwrap().success());
     }
+    // The first record started a background sync: let it write and release the lock, or ours would
+    // only mark it dirty and the background one would re-run without the width.
+    let reported = env.dir.join("state/reported.json");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !reported.exists() {
+        assert!(std::time::Instant::now() < deadline, "the background sync never ran");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    std::fs::File::open(env.dir.join("state/sync.lock")).unwrap().lock().unwrap();
     let out = env.command(&["sync", "--quiet"]).env("SPACE_KIT_ROW_WIDTH", "12").output().unwrap();
     assert!(out.status.success(), "{}", text(&out.stderr));
-    let reported = std::fs::read_to_string(env.dir.join("state/reported.json")).unwrap();
+    let reported = std::fs::read_to_string(reported).unwrap();
     assert!(reported.contains("━━ Work · 1 ━"), "{reported}");
 }
