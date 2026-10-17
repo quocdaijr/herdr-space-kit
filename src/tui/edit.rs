@@ -136,6 +136,7 @@ mod tests {
             collapsed: false,
             key: Some(key.to_owned()),
             target: Some(Target::Workspace(key.to_owned())),
+            counts: Vec::new(),
         }
     }
 

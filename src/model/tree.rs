@@ -45,6 +45,20 @@ pub struct Row {
     /// Fold key (`g:<name>` / `s:<path>`); agents have none.
     pub key: Option<String>,
     pub target: Option<Target>,
+    /// Group rows: agent counts drawn after `text`, each in its status colour.
+    pub counts: Vec<(AgentStatus, usize)>,
+}
+
+impl Row {
+    /// `counts` as text, e.g. " ●2 ●1".
+    pub fn counts_text(&self) -> String {
+        self.counts.iter().map(|(s, n)| format!(" {}{n}", s.glyph())).collect()
+    }
+
+    /// The whole row as plain text.
+    pub fn label(&self) -> String {
+        self.text.clone() + &self.counts_text()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -168,13 +182,12 @@ impl<'a> Ctx<'a> {
         let count = |status| spaces.iter().map(|n| count_agents(n, status)).sum::<usize>();
         let key = group_key(name);
         let collapsed = self.folds.is_collapsed(&key);
-        let mut text = format!("{} {name} ·{}", if collapsed { '▸' } else { '▾' }, spaces.len());
-        for status in [AgentStatus::Working, AgentStatus::Blocked] {
-            let n = count(status);
-            if n > 0 {
-                text.push_str(&format!(" {}{n}", status.glyph()));
-            }
-        }
+        let text = format!("{} {name} ·{}", if collapsed { '▸' } else { '▾' }, spaces.len());
+        let counts = [AgentStatus::Working, AgentStatus::Blocked]
+            .into_iter()
+            .map(|s| (s, count(s)))
+            .filter(|c| c.1 > 0)
+            .collect();
         let row = Row {
             kind: Kind::Group,
             depth: 0,
@@ -185,6 +198,7 @@ impl<'a> Ctx<'a> {
             collapsed,
             key: Some(key),
             target: None,
+            counts,
         };
         Node { row, children: spaces }
     }
@@ -246,6 +260,7 @@ impl<'a> Ctx<'a> {
             collapsed: self.folds.is_collapsed(&key),
             key: Some(key),
             target: Some(Target::Workspace(ws.workspace_id.clone())),
+            counts: Vec::new(),
         };
         Node { row, children }
     }
@@ -264,6 +279,7 @@ impl<'a> Ctx<'a> {
             collapsed: false,
             key: None,
             target: Some(Target::Pane(a.pane_id.clone())),
+            counts: Vec::new(),
         };
         Node { row, children: Vec::new() }
     }
@@ -318,7 +334,7 @@ mod tests {
     }
 
     fn texts(rows: &[Row]) -> Vec<String> {
-        rows.iter().map(|r| r.text.clone()).collect()
+        rows.iter().map(Row::label).collect()
     }
 
     #[test]

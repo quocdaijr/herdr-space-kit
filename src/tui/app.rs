@@ -299,7 +299,7 @@ pub(super) mod tests {
     }
 
     fn texts(app: &App) -> Vec<String> {
-        app.rows.iter().map(|r| r.text.trim().to_owned()).collect()
+        app.rows.iter().map(|r| r.label().trim().to_owned()).collect()
     }
 
     #[test]

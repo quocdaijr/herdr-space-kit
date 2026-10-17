@@ -13,6 +13,18 @@ pub fn home() -> PathBuf {
     PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
 }
 
+/// Herdr's `~/.config/herdr/config.toml`, if present and valid.
+#[cfg(not(test))]
+pub fn herdr_config() -> Option<toml::Table> {
+    std::fs::read_to_string(home().join(".config/herdr/config.toml")).ok()?.parse().ok()
+}
+
+/// Tests never read the user's Herdr config.
+#[cfg(test)]
+pub fn herdr_config() -> Option<toml::Table> {
+    None
+}
+
 /// `$HERDR_PLUGIN_STATE_DIR`, else `$XDG_STATE_HOME/herdr/plugins/space-kit`.
 #[cfg(not(test))]
 pub fn state_dir() -> PathBuf {

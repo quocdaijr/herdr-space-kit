@@ -206,10 +206,10 @@ mod tests {
         case.statuses = [("a-wt", vec![Blocked]), ("c", vec![Working])].into();
         case.focused = Some("b");
         let t = case.run();
-        assert_eq!(get(&t, "h", "group_header"), Some("━━ ▸ Work · 3 ●1 ?1 ━━━━━━━━━━"));
+        assert_eq!(get(&t, "h", "group_header"), Some("━━ ▸ Work · 3 ●1 ●1 ━━━━━━━━━━"));
         assert_eq!(get(&t, "a", "group_row"), None);
         assert_eq!(get(&t, "a", "group_branch"), None);
-        assert_eq!(get(&t, "a-wt", "group_row"), Some("▸ a-wt-label  ?1"), "blocked rows stay, marked as peeking");
+        assert_eq!(get(&t, "a-wt", "group_row"), Some("▸ a-wt-label  ●1"), "blocked rows stay, marked as peeking");
         assert_eq!(get(&t, "b", "group_row"), Some("▸ b-label  (open)"), "the focused row says why it shows");
         assert_eq!(get(&t, "c", "group_row"), None);
 
@@ -218,7 +218,7 @@ mod tests {
         let t = case.run();
         assert_eq!(get(&t, "a", "group_row"), Some("▸ a-label"));
         assert_eq!(get(&t, "a", "group_branch"), Some("⠀⠀⠀[primary] - develop"));
-        assert_eq!(get(&t, "a-wt", "group_row"), Some("▸ a-wt-label  ?1  (open)"));
+        assert_eq!(get(&t, "a-wt", "group_row"), Some("▸ a-wt-label  ●1  (open)"));
         assert_eq!(get(&t, "b", "group_row"), None, "other families stay folded");
     }
 }
