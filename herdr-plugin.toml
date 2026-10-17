@@ -1,6 +1,6 @@
 id = "space-kit"
 name = "Space Kit"
-version = "0.1.0"
+version = "0.1.1"
 min_herdr_version = "0.9.1"
 description = "Workspace groups, a grouped Agents tab and Claude/Codex usage for Herdr's sidebar"
 platforms = ["linux", "macos"]
