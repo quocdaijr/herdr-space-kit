@@ -19,6 +19,10 @@ pub struct Sidebar {
     /// Header workspace ids, so `workspace.focused` can tell a header click cheaply.
     #[serde(default)]
     pub header_ids: Vec<String>,
+    /// Pane ids in header workspaces at the last sync: a header refocused onto a pane not in here
+    /// was just opened by another plugin, not clicked.
+    #[serde(default)]
+    pub header_panes: Vec<String>,
     /// The header id and unix-ms time of the last header-click toggle, so focus coming back to
     /// that header right away (another plugin refocusing a pane there) is not a second click.
     #[serde(default)]
@@ -46,6 +50,7 @@ impl Sidebar {
             collapsed: strings(&session["collapsed"]),
             last_focused: session["last_focused"].as_str().map(str::to_owned),
             header_ids: strings(&session["header_ids"]),
+            header_panes: Vec::new(),
             last_toggle: None,
         }
     }

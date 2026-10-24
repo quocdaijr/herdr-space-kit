@@ -17,8 +17,9 @@ use std::path::Path;
 
 const MAX_PASSES: usize = 3;
 const FORCE: &str = "force";
-/// Focus landing on a header again this soon after it toggled is an echo, not a click (the
-/// herdr-sidebar plugin refocuses its pane in the workspace that was focused at the click).
+/// Focus landing on a header again this soon after it toggled, on a pane the header did not have
+/// at the last sync, is an echo, not a click (the herdr-sidebar plugin opens and focuses its pane
+/// in the workspace that was focused at the click).
 /// ponytail: a time window, so a real fold-then-unfold inside it is missed; use an event source
 /// field instead if Herdr adds one.
 const CLICK_ECHO_MS: u64 = 1500;
@@ -108,7 +109,8 @@ fn sync_once(api: &dyn Api, state_dir: &Path, force: bool) -> Result<String> {
         let echo = sidebar
             .last_toggle
             .as_ref()
-            .is_some_and(|(id, at)| *id == header.workspace_id && now.saturating_sub(*at) < CLICK_ECHO_MS);
+            .is_some_and(|(id, at)| *id == header.workspace_id && now.saturating_sub(*at) < CLICK_ECHO_MS)
+            && snap.focused_pane_id.as_ref().is_some_and(|p| !saved.header_panes.contains(p));
         if !echo {
             sidebar = sidebar.toggle(group, &groups);
             sidebar.last_toggle = Some((header.workspace_id.clone(), now));
@@ -127,7 +129,11 @@ fn sync_once(api: &dyn Api, state_dir: &Path, force: bool) -> Result<String> {
     }
     let mut header_ids: Vec<String> = split.headers.iter().map(|(_, w)| w.workspace_id.clone()).collect();
     header_ids.sort();
+    let mut header_panes: Vec<String> =
+        snap.panes.iter().filter(|p| header_ids.contains(&p.workspace_id)).map(|p| p.pane_id.clone()).collect();
+    header_panes.sort();
     sidebar.header_ids = header_ids;
+    sidebar.header_panes = header_panes;
 
     let sections = sections(&split.projects, &snap.panes, &groups);
     let order = desired_order(&sections, |g| split.header_id(g));
@@ -439,17 +445,27 @@ mod tests {
     #[test]
     fn a_header_refocused_right_after_a_click_is_not_a_second_click() {
         let dir = setup("sync-click-echo");
-        let api = Fake { snapshot: snap("h1"), ..Default::default() };
-        sync(&api, &dir, true, true).unwrap();
-        sync(&api, &dir, false, true).unwrap();
-        assert_eq!(Sidebar::load(&dir).collapsed, ["A"], "the echo did not unfold it");
-        let focus_calls = api.methods().iter().filter(|m| *m == "workspace.focus").count();
-        assert_eq!(focus_calls, 2, "both times focus leaves the header");
+        let header = |panes: &[&str], focused_pane: &str| {
+            let mut s = snap("h1");
+            s["panes"] = panes.iter().map(|p| json!({"pane_id": p, "workspace_id": "h1"})).collect();
+            s["focused_pane_id"] = json!(focused_pane);
+            Fake { snapshot: s, ..Default::default() }
+        };
+        let collapsed = || Sidebar::load(&dir).collapsed;
+        sync(&header(&["h1:1"], "h1:1"), &dir, true, true).unwrap();
+        assert_eq!(collapsed(), ["A"], "the click folds");
 
-        let old = Sidebar { last_toggle: Some(("h1".into(), 0)), ..Sidebar::load(&dir) };
-        old.save(&dir).unwrap();
-        sync(&api, &dir, false, true).unwrap();
-        assert!(Sidebar::load(&dir).collapsed.is_empty(), "a later click toggles again");
+        let echo = header(&["h1:1", "h1:2"], "h1:2");
+        sync(&echo, &dir, false, true).unwrap();
+        assert_eq!(collapsed(), ["A"], "another plugin focusing its new pane there is not a click");
+        assert!(echo.methods().contains(&"workspace.focus".to_owned()), "focus still leaves the header");
+
+        sync(&header(&["h1:1", "h1:2"], "h1:2"), &dir, false, true).unwrap();
+        assert!(collapsed().is_empty(), "a quick click on a known pane toggles");
+
+        Sidebar { last_toggle: Some(("h1".into(), 0)), ..Sidebar::load(&dir) }.save(&dir).unwrap();
+        sync(&header(&["h1:1", "h1:3"], "h1:3"), &dir, false, true).unwrap();
+        assert_eq!(collapsed(), ["A"], "outside the window even a new pane is a click");
         let _ = std::fs::remove_dir_all(dir);
     }
 
