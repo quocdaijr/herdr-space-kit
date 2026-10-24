@@ -17,6 +17,16 @@ use std::path::Path;
 
 const MAX_PASSES: usize = 3;
 const FORCE: &str = "force";
+/// Focus landing on a header again this soon after it toggled is an echo, not a click (the
+/// herdr-sidebar plugin refocuses its pane in the workspace that was focused at the click).
+/// ponytail: a time window, so a real fold-then-unfold inside it is missed; use an event source
+/// field instead if Herdr adds one.
+const CLICK_ECHO_MS: u64 = 1500;
+
+fn now_ms() -> u64 {
+    let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+}
 
 pub fn snapshot(api: &dyn Api) -> Result<Snapshot> {
     let mut result = api.call("session.snapshot", json!({}))?;
@@ -88,14 +98,28 @@ fn sync_once(api: &dyn Api, state_dir: &Path, force: bool) -> Result<String> {
     }
     let split = Split::of(&snap.workspaces);
 
-    // Clicking a header folds/unfolds its group, then returns to the last project.
+    // Clicking a header folds/unfolds its group, then returns to the last project (or the group's
+    // first one), so focus never rests on a header: the next click always fires an event.
     let mut focused = snap.focused_workspace_id.clone();
-    let clicked = split.headers.iter().find(|(_, w)| Some(&w.workspace_id) == focused.as_ref()).map(|(g, _)| *g);
+    let clicked = split.headers.iter().find(|(_, w)| Some(&w.workspace_id) == focused.as_ref()).copied();
     let is_project = |id: &str| split.projects.iter().any(|w| w.workspace_id == id);
-    if let Some(group) = clicked {
-        sidebar = sidebar.toggle(group, &groups);
-        if let Some(back) = sidebar.last_focused.clone().filter(|b| is_project(b)) {
+    if let Some((group, header)) = clicked {
+        let now = now_ms();
+        let echo = sidebar
+            .last_toggle
+            .as_ref()
+            .is_some_and(|(id, at)| *id == header.workspace_id && now.saturating_sub(*at) < CLICK_ECHO_MS);
+        if !echo {
+            sidebar = sidebar.toggle(group, &groups);
+            sidebar.last_toggle = Some((header.workspace_id.clone(), now));
+        }
+        let first_member = || {
+            let section = sections(&split.projects, &snap.panes, &groups).into_iter().find(|s| s.group == Some(group));
+            section.and_then(|s| s.entries.first().map(|e| e.ws.workspace_id.clone()))
+        };
+        if let Some(back) = sidebar.last_focused.clone().filter(|b| is_project(b)).or_else(first_member) {
             api.call("workspace.focus", json!({"workspace_id": back}))?;
+            sidebar.last_focused = Some(back.clone());
             focused = Some(back);
         }
     } else if let Some(id) = focused.clone().filter(|f| is_project(f)) {
@@ -402,13 +426,30 @@ mod tests {
     }
 
     #[test]
-    fn a_header_click_without_a_known_last_project_stays_put() {
+    fn a_header_click_without_a_known_last_project_goes_to_the_group() {
         let dir = setup("sync-click-unknown");
-        Sidebar::default().save(&dir).unwrap();
+        Sidebar { last_focused: Some("closed".into()), ..Default::default() }.save(&dir).unwrap();
         let api = Fake { snapshot: snap("h1"), ..Default::default() };
         sync(&api, &dir, true, true).unwrap();
-        assert!(!api.methods().contains(&"workspace.focus".to_owned()));
+        assert!(api.sent.borrow().iter().any(|(m, p)| m == "workspace.focus" && p["workspace_id"] == "p2"));
         assert_eq!(Sidebar::load(&dir).collapsed, ["A"]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_header_refocused_right_after_a_click_is_not_a_second_click() {
+        let dir = setup("sync-click-echo");
+        let api = Fake { snapshot: snap("h1"), ..Default::default() };
+        sync(&api, &dir, true, true).unwrap();
+        sync(&api, &dir, false, true).unwrap();
+        assert_eq!(Sidebar::load(&dir).collapsed, ["A"], "the echo did not unfold it");
+        let focus_calls = api.methods().iter().filter(|m| *m == "workspace.focus").count();
+        assert_eq!(focus_calls, 2, "both times focus leaves the header");
+
+        let old = Sidebar { last_toggle: Some(("h1".into(), 0)), ..Sidebar::load(&dir) };
+        old.save(&dir).unwrap();
+        sync(&api, &dir, false, true).unwrap();
+        assert!(Sidebar::load(&dir).collapsed.is_empty(), "a later click toggles again");
         let _ = std::fs::remove_dir_all(dir);
     }
 
