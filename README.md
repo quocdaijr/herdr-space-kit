@@ -14,7 +14,7 @@
 
 A Herdr plugin that organizes Herdr's own sidebar:
 
-- **Workspace groups in Spaces.** Each group gets an empty header workspace (`⟦Group⟧`) followed by its projects, with linked worktrees under their repo. Click a header, or press your fold key, to fold the group; the focused workspace (with its repo, main checkout and worktrees) and anything blocked on you stay visible, marked `▸` (the focused one also says `(open)`), so a peeking row never reads as an unfolded group. The `contains = "▸ "` rule in the config below highlights them.
+- **Workspace groups in Spaces.** Each group gets a header workspace (`⟦Group⟧`) followed by its projects, with linked worktrees under their repo. Click a header, or press your fold key, to fold the group. Focus stays on the header, so the sidebar does not scroll away, and the header's pane shows the group overview: `Enter` or a click opens a project, `Space` or a click on the title folds or unfolds. When a group is folded, the focused workspace (with its repo, main checkout and worktrees) and anything blocked on you stay visible, marked `▸` (the focused one also says `(open)`), so a peeking row never reads as an unfolded group. The `contains = "▸ "` rule in the config below highlights them.
 - **Agent states on every row**, e.g. `├─ storefront  ◐2 ○1`, drawn with the same icons as Herdr's `ui.status_indicators` setting (symbols: blocked `×`, working `◐`, done `✓`, idle `○`; dots: `●` for blocked, working and done). A workspace with worktrees or agents lists its main checkout as a `[primary] - <branch>` row, like a worktree, so its agents never mix with the worktrees'.
 - **Agents tab grouped by workspace**: a `━ Group › workspace ━` header on the first agent of each workspace, in sidebar order.
 - **Claude / Codex usage in the Agents panel title**, e.g. `✻7% 42% ◆0%` (Claude 5h and 7d, then Codex).
@@ -113,6 +113,7 @@ space-kit sync [--quiet] [--force] [--on-focus]   order the sidebar and report i
 space-kit toggle-collapse [--workspace ID]         fold or unfold a workspace's group
 space-kit open                                     open the manager popup
 space-kit manage                                   run the manager in this terminal
+space-kit overview HEADER_ID                       a header's group overview (sync starts it in the header's pane)
 space-kit record                                   cache Claude's statusline rate limits (JSON on stdin)
 ```
 
@@ -121,6 +122,7 @@ space-kit record                                   cache Claude's statusline rat
 ## Herdr limits worked around
 
 - A plugin cannot hide a workspace, so folding blanks member rows; each still takes one line.
+- Herdr scrolls its sidebar to the focused workspace, so a header click keeps focus on the header instead of going back to your project. Clicking the header you are already on sends no event; use the overview's `Space`.
 - Rows cannot set a background, so Agents tab rows share their agent's selection highlight.
 - Herdr indents rows after an entry's first by two columns; braille blanks (`⠀`) keep rows aligned.
 - Tokens and agent views are lost on a server restart; the startup hook resends them.
@@ -130,7 +132,7 @@ space-kit record                                   cache Claude's statusline rat
 `~/.local/state/herdr/plugins/space-kit/` (or `$HERDR_PLUGIN_STATE_DIR`):
 
 - `groups.json`: groups (name, color, order) and path → group assignments
-- `sidebar.json`: folded groups, the last focused workspace, header workspace ids
+- `sidebar.json`: folded groups, header workspace ids
 - `reported.json`: tokens last sent, so a sync only reports changes
 - `headers/<group>/`: the empty folders header workspaces open in
 - `view-label.txt`: the Agents panel title last set, so it is only re-sent when it changes
