@@ -106,7 +106,7 @@ fn sync_reports_and_toggle_collapse_folds() {
 }
 
 #[test]
-fn on_focus_toggles_a_clicked_header_and_skips_other_focus_changes() {
+fn on_focus_unfolds_a_clicked_header_and_skips_other_focus_changes() {
     let env = Env::new("focus");
     env.run(&["sync", "--quiet"]);
     let focus = |id: &str| {
@@ -116,11 +116,13 @@ fn on_focus_toggles_a_clicked_header_and_skips_other_focus_changes() {
     let out = focus("p9");
     assert!(out.status.success() && out.stdout.is_empty(), "nothing folded: no sync");
     assert_eq!(env.sidebar()["collapsed"], json!([]));
+    env.run(&["toggle-collapse", "--workspace", "h1"]);
+    assert_eq!(env.sidebar()["collapsed"], json!(["Work"]));
     let out = focus("h1");
     assert!(out.status.success(), "{}", text(&out.stderr));
-    assert_eq!(env.sidebar()["collapsed"], json!(["Work"]), "a header click folds its group");
+    assert_eq!(env.sidebar()["collapsed"], json!([]), "a header click unfolds its group");
     focus("h1");
-    assert_eq!(env.sidebar()["collapsed"], json!([]), "and unfolds it");
+    assert_eq!(env.sidebar()["collapsed"], json!([]), "and never folds it");
 }
 
 #[test]

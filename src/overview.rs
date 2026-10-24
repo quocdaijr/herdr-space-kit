@@ -1,6 +1,6 @@
 //! The group overview that lives in a header workspace's pane. Clicking a header keeps focus on
 //! it (so Herdr's sidebar does not scroll away), and this pane shows what is in the group: open a
-//! project with Enter or a click, fold or unfold the group with Space or a click on the title.
+//! project with Enter or a click, fold or unfold the group with Space.
 use crate::herdr::client::{Api, Socket};
 use crate::herdr::types::{AgentStatus, Snapshot};
 use crate::model::groups::Groups;
@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 const POLL: Duration = Duration::from_millis(100);
 /// ponytail: agent states refresh on a timer, not per-pane status subscriptions like the manager.
 const TICK: Duration = Duration::from_secs(2);
-/// Rows above the list: the title (click to fold/unfold) and the key hint.
+/// Rows above the list: the title and the key hint.
 const TOP: usize = 2;
 const HINT: &str = "↑↓ move · Enter/click open · Space fold/unfold";
 
@@ -133,13 +133,10 @@ impl<'a> App<'a> {
         }
     }
 
-    /// A left click on screen row `row`: the title toggles, a list row opens.
+    /// A left click on screen row `row` opens that list row; folding is `Space` only.
     pub fn click(&mut self, row: usize) {
-        if row == 0 {
-            self.toggle();
-        } else if let Some(i) = row.checked_sub(TOP)
-            && self.view.as_ref().is_some_and(|v| i < v.rows.len())
-        {
+        let Some(i) = row.checked_sub(TOP) else { return };
+        if self.view.as_ref().is_some_and(|v| i < v.rows.len()) {
             self.cursor = i;
             self.open();
         }
@@ -312,7 +309,9 @@ mod tests {
         assert_eq!(Sidebar::load(&dir).collapsed, ["A"]);
         assert!(app.view.as_ref().unwrap().folded, "refreshed after the fold");
         app.input(click(0));
-        assert!(Sidebar::load(&dir).collapsed.is_empty(), "a click on the title unfolds");
+        assert_eq!(Sidebar::load(&dir).collapsed, ["A"], "a click on the title does nothing");
+        app.input(key(KeyCode::Char(' ')));
+        assert!(Sidebar::load(&dir).collapsed.is_empty(), "Space unfolds");
 
         app.input(click(4));
         assert_eq!(app.cursor, 2);
