@@ -120,7 +120,12 @@ fn on_focus_unfolds_a_clicked_header_and_skips_other_focus_changes() {
     assert_eq!(env.sidebar()["collapsed"], json!(["Work"]));
     let out = focus("h1");
     assert!(out.status.success(), "{}", text(&out.stderr));
-    assert_eq!(env.sidebar()["collapsed"], json!([]), "a header click unfolds its group");
+    assert_eq!(env.sidebar()["collapsed"], json!(["Work"]), "by default a click keeps the fold");
+    let mut sidebar = env.sidebar();
+    sidebar["unfold_on_click"] = json!(true);
+    std::fs::write(env.dir.join("state/sidebar.json"), sidebar.to_string()).unwrap();
+    focus("h1");
+    assert_eq!(env.sidebar()["collapsed"], json!([]), "with unfold_on_click, a header click unfolds");
     focus("h1");
     assert_eq!(env.sidebar()["collapsed"], json!([]), "and never folds it");
 }

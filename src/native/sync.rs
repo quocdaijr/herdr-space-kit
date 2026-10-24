@@ -37,10 +37,10 @@ pub fn sync(api: &dyn Api, state_dir: &Path, force: bool, wait: bool) -> Result<
 #[derive(Clone, Copy)]
 enum Change<'a> {
     Toggle(&'a str),
-    /// A header click: unfold the group, unless folding is set to `Space` only.
+    /// A header click: unfold the group when `unfold_on_click` is on.
     Unfold(&'a str),
-    /// Flip whether a header click unfolds.
-    SpaceOnly,
+    /// Flip `unfold_on_click`.
+    UnfoldOnClick,
 }
 
 /// Fold or unfold `group`, then sync. The flip happens under the sync lock, so a running sync
@@ -49,14 +49,14 @@ pub fn toggle_group(api: &dyn Api, state_dir: &Path, group: &str) -> Result<Stri
     run(api, state_dir, false, true, Some(Change::Toggle(group)))
 }
 
-/// Flip the `fold_by_space_only` setting, then sync.
-pub fn toggle_space_only(api: &dyn Api, state_dir: &Path) -> Result<String> {
-    run(api, state_dir, false, true, Some(Change::SpaceOnly))
+/// Flip the `unfold_on_click` setting, then sync.
+pub fn toggle_unfold_on_click(api: &dyn Api, state_dir: &Path) -> Result<String> {
+    run(api, state_dir, false, true, Some(Change::UnfoldOnClick))
 }
 
-/// A click on a header (a `workspace.focused` event for it) unfolds its group, unless
-/// `fold_by_space_only` is set; folding is the overview's `Space`. Focus stays on the header, whose pane shows the group overview, so the
-/// sidebar does not scroll.
+/// A click on a header (a `workspace.focused` event for it) opens its overview, and unfolds the
+/// group when `unfold_on_click` is on; otherwise only the overview's `Space` folds. Focus stays on
+/// the header, so the sidebar does not scroll.
 pub fn header_click(api: &dyn Api, state_dir: &Path, header_id: &str) -> Result<String> {
     let snap = snapshot(api)?;
     let ws = snap
@@ -104,12 +104,12 @@ fn run(api: &dyn Api, state_dir: &Path, force: bool, wait: bool, change: Option<
 fn apply(api: &dyn Api, state_dir: &Path, change: Change) -> Result<()> {
     let sidebar = Sidebar::load(state_dir);
     let group = match change {
-        Change::SpaceOnly => None,
+        Change::UnfoldOnClick => None,
         Change::Toggle(group) => Some(group),
-        Change::Unfold(group) => (sidebar.is_folded(group) && !sidebar.fold_by_space_only).then_some(group),
+        Change::Unfold(group) => (sidebar.is_folded(group) && sidebar.unfold_on_click).then_some(group),
     };
     let next = match (change, group) {
-        (Change::SpaceOnly, _) => Sidebar { fold_by_space_only: !sidebar.fold_by_space_only, ..sidebar },
+        (Change::UnfoldOnClick, _) => Sidebar { unfold_on_click: !sidebar.unfold_on_click, ..sidebar },
         (_, Some(group)) => {
             let snap = snapshot(api)?;
             let groups = Groups::load(state_dir, &snap).map_err(|e| format!("groups.json: {e}"))?;
@@ -496,15 +496,14 @@ mod tests {
         header_click(&api, &dir, "h1").unwrap();
         assert!(Sidebar::load(&dir).collapsed.is_empty(), "an unfolded group stays unfolded");
         toggle_group(&api, &dir, "A").unwrap();
-        assert_eq!(Sidebar::load(&dir).collapsed, ["A"]);
         header_click(&api, &dir, "h1").unwrap();
-        assert!(Sidebar::load(&dir).collapsed.is_empty(), "a click unfolds a folded group");
-        toggle_space_only(&api, &dir).unwrap();
-        toggle_group(&api, &dir, "A").unwrap();
+        assert_eq!(Sidebar::load(&dir).collapsed, ["A"], "by default a click leaves the fold alone");
+        toggle_unfold_on_click(&api, &dir).unwrap();
+        assert!(Sidebar::load(&dir).unfold_on_click);
         header_click(&api, &dir, "h1").unwrap();
-        assert_eq!(Sidebar::load(&dir).collapsed, ["A"], "Space-only: a click leaves the fold alone");
-        toggle_space_only(&api, &dir).unwrap();
-        assert!(!Sidebar::load(&dir).fold_by_space_only);
+        assert!(Sidebar::load(&dir).collapsed.is_empty(), "with the setting on, a click unfolds");
+        header_click(&api, &dir, "h1").unwrap();
+        assert!(Sidebar::load(&dir).collapsed.is_empty(), "and never folds");
         assert!(!api.methods().contains(&"workspace.focus".to_owned()));
         assert_eq!(header_click(&api, &dir, "p1"), Err("p1 is not a group header".into()));
         assert_eq!(header_click(&api, &dir, "nope"), Err("no workspace nope".into()));

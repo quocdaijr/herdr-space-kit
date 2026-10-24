@@ -16,10 +16,10 @@ pub struct Sidebar {
     /// Header workspace ids, so `workspace.focused` can tell a header click cheaply.
     #[serde(default)]
     pub header_ids: Vec<String>,
-    /// Setting: a header click only opens the overview and never unfolds; `Space` there folds
-    /// and unfolds. Toggled with `c` in the overview.
+    /// Setting (off by default): a header click also unfolds its group. Off, only `Space` in the
+    /// overview folds and unfolds. Toggled with `c` in the overview.
     #[serde(default)]
-    pub fold_by_space_only: bool,
+    pub unfold_on_click: bool,
 }
 
 impl Sidebar {

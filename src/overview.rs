@@ -1,7 +1,7 @@
 //! The group overview that lives in a header workspace's pane. Clicking a header keeps focus on
 //! it (so Herdr's sidebar does not scroll away), and this pane shows what is in the group: open a
-//! project with Enter or a click, fold or unfold the group with Space, and `c` picks whether a
-//! header click unfolds its group.
+//! project with Enter or a click, fold or unfold the group with Space, and `c` turns on (or off)
+//! unfolding the group when its header is clicked.
 use crate::herdr::client::{Api, Socket};
 use crate::herdr::types::{AgentStatus, Snapshot};
 use crate::model::groups::Groups;
@@ -25,9 +25,9 @@ use std::time::{Duration, Instant};
 const POLL: Duration = Duration::from_millis(100);
 /// ponytail: agent states refresh on a timer, not per-pane status subscriptions like the manager.
 const TICK: Duration = Duration::from_secs(2);
-/// Rows above the list: the title and the key hint.
-const TOP: usize = 2;
-const HINT: &str = "↑↓ move · Enter/click open · Space fold/unfold · c ";
+/// Rows above the list: the title, the key hint and the `c` setting.
+const TOP: usize = 3;
+const HINT: &str = "↑↓ move · Enter/click open · Space fold/unfold";
 
 #[derive(Debug, PartialEq)]
 pub struct Row {
@@ -41,8 +41,8 @@ pub struct Row {
 pub struct Overview {
     pub group: String,
     pub folded: bool,
-    /// The `fold_by_space_only` setting.
-    pub space_only: bool,
+    /// The `unfold_on_click` setting.
+    pub unfold_on_click: bool,
     /// Top-level entries, as the sidebar header counts them (worktrees are rows, not projects).
     pub projects: usize,
     pub rows: Vec<Row>,
@@ -75,7 +75,7 @@ pub fn build(snap: &Snapshot, groups: &Groups, sidebar: &Sidebar, header_id: &st
     Some(Overview {
         group: group.to_owned(),
         folded: sidebar.is_folded(group),
-        space_only: sidebar.fold_by_space_only,
+        unfold_on_click: sidebar.unfold_on_click,
         projects: entries.len(),
         rows,
     })
@@ -132,11 +132,11 @@ impl<'a> App<'a> {
         self.refresh();
     }
 
-    fn toggle_space_only(&mut self) {
+    fn toggle_unfold_on_click(&mut self) {
         if self.view.is_none() {
             return;
         }
-        if let Err(e) = sync::toggle_space_only(self.api, &self.dir) {
+        if let Err(e) = sync::toggle_unfold_on_click(self.api, &self.dir) {
             self.status = e;
         }
         self.refresh();
@@ -148,7 +148,7 @@ impl<'a> App<'a> {
             KeyCode::Down | KeyCode::Char('j') => self.step(1),
             KeyCode::Enter => self.open(),
             KeyCode::Char(' ') => self.toggle(),
-            KeyCode::Char('c') => self.toggle_space_only(),
+            KeyCode::Char('c') => self.toggle_unfold_on_click(),
             _ => {}
         }
     }
@@ -173,7 +173,8 @@ impl<'a> App<'a> {
         let bold = Style::default().add_modifier(Modifier::BOLD);
         let mut lines = vec![
             Line::styled(format!("{title}{}{action}", " ".repeat(gap)), bold),
-            Line::styled(self.hint(view), Style::default().add_modifier(Modifier::DIM)),
+            Line::styled(self.hint(), Style::default().add_modifier(Modifier::DIM)),
+            Line::raw(setting(view.unfold_on_click)),
         ];
         for (i, row) in view.rows.iter().enumerate() {
             let text = fit_row(&row.prefix, &row.label, &row.counts, width);
@@ -200,13 +201,14 @@ impl<'a> App<'a> {
 }
 
 impl App<'_> {
-    fn hint(&self, view: &Overview) -> String {
-        if !self.status.is_empty() {
-            return self.status.clone();
-        }
-        let click = if view.space_only { "header click: no fold change" } else { "header click: unfolds" };
-        format!("{HINT}{click}")
+    fn hint(&self) -> String {
+        if self.status.is_empty() { HINT.to_owned() } else { self.status.clone() }
     }
+}
+
+fn setting(on: bool) -> String {
+    let (state, verb) = if on { ("ON", "off") } else { ("OFF", "on") };
+    format!("c  Unfold when the header is clicked: {state} (press c to turn {verb})")
 }
 
 fn plural(n: usize) -> String {
@@ -337,17 +339,18 @@ mod tests {
         assert!(app.view.as_ref().unwrap().folded, "refreshed after the fold");
         app.input(click(0));
         assert_eq!(Sidebar::load(&dir).collapsed, ["A"], "a click on the title does nothing");
-        assert!(app.lines(120)[1].to_string().ends_with("c header click: unfolds"));
+        assert_eq!(app.lines(120)[2].to_string(), "c  Unfold when the header is clicked: OFF (press c to turn on)");
         app.input(key(KeyCode::Char('c')));
-        assert!(Sidebar::load(&dir).fold_by_space_only);
-        assert!(app.lines(120)[1].to_string().ends_with("c header click: no fold change"));
+        assert!(Sidebar::load(&dir).unfold_on_click);
+        assert_eq!(app.lines(120)[2].to_string(), "c  Unfold when the header is clicked: ON (press c to turn off)");
         app.input(key(KeyCode::Char(' ')));
         assert!(Sidebar::load(&dir).collapsed.is_empty(), "Space unfolds");
 
-        app.input(click(4));
+        app.input(click(5));
         assert_eq!(app.cursor, 2);
         assert!(api.sent.borrow().iter().any(|(m, p)| m == "workspace.focus" && p["workspace_id"] == "p2"));
-        app.input(click(1)); // the hint line does nothing
+        app.input(click(1)); // the hint and setting lines do nothing
+        app.input(click(2));
         app.input(click(9)); // below the list
         assert_eq!(app.cursor, 2);
         let _ = std::fs::remove_dir_all(dir);
@@ -413,7 +416,8 @@ mod tests {
         let row = |y: u16| (0..60).map(|x| terminal.backend().buffer()[(x, y)].symbol().to_owned()).collect::<String>();
         assert!(row(0).starts_with("━━ A · 2 projects · unfolded"), "{}", row(0));
         assert!(row(0).trim_end().ends_with("[ Space: fold ]"));
-        assert!(row(2).starts_with("├─ web"));
+        assert!(row(2).starts_with("c  Unfold when the header is clicked: OFF"));
+        assert!(row(3).starts_with("├─ web"));
         assert_eq!(plural(1), "1 project");
         let _ = std::fs::remove_dir_all(dir);
     }
