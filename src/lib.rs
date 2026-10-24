@@ -2,6 +2,7 @@
 pub mod herdr;
 pub mod model;
 pub mod native;
+pub mod overview;
 pub mod text;
 pub mod tui;
 pub mod usage;

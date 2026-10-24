@@ -2,7 +2,7 @@
 use space_kit::herdr::client::{Socket, socket_path};
 use space_kit::model::{PLUGIN_ID, state_dir};
 use space_kit::native::sync;
-use space_kit::{tui, usage};
+use space_kit::{overview, tui, usage};
 use std::io::Read;
 use std::process::{Command, ExitCode, Stdio};
 
@@ -12,6 +12,7 @@ const USAGE: &str = "usage: space-kit <command>
   toggle-collapse [--workspace ID]         fold or unfold a workspace's group
   open                                     open the group manager popup
   manage                                   run the group manager in this terminal
+  overview HEADER_ID                       show a group header's overview (runs in its pane)
   record                                   cache Claude's statusline rate limits (JSON on stdin)";
 
 fn main() -> ExitCode {
@@ -34,8 +35,14 @@ fn run(args: &[String]) -> Result<(), String> {
             if let Some(bad) = rest.iter().find(|a| !["--quiet", "--force", "--on-focus"].contains(&a.as_str())) {
                 return Err(format!("unknown argument {bad}\n{USAGE}"));
             }
-            if has("--on-focus") && !sync::focus_needs_sync(&dir) {
-                return Ok(());
+            if has("--on-focus") {
+                if let Some(header) = sync::focused_header(&dir) {
+                    sync::header_click(&Socket, &dir, &header)?;
+                    return Ok(());
+                }
+                if !sync::focus_needs_sync(&dir) {
+                    return Ok(());
+                }
             }
             let summary = sync::sync(&Socket, &dir, has("--force"), false)?;
             if !has("--quiet") {
@@ -54,6 +61,10 @@ fn run(args: &[String]) -> Result<(), String> {
         }
         "open" => open_manager(),
         "manage" => tui::run(dir),
+        "overview" => match rest {
+            [header] => overview::run(dir, header.clone()),
+            _ => Err(USAGE.into()),
+        },
         "record" => record(),
         "-h" | "--help" | "help" => {
             println!("{USAGE}");

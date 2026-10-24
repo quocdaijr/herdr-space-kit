@@ -17,6 +17,8 @@ use std::path::Path;
 
 const MAX_PASSES: usize = 3;
 const FORCE: &str = "force";
+/// Foreground process names that are an idle shell, safe to type the overview command into.
+const SHELLS: [&str; 5] = ["zsh", "bash", "fish", "sh", "dash"];
 
 pub fn snapshot(api: &dyn Api) -> Result<Snapshot> {
     let mut result = api.call("session.snapshot", json!({}))?;
@@ -28,6 +30,45 @@ pub fn snapshot(api: &dyn Api) -> Result<Snapshot> {
 /// `--force` must survive racing an event hook). Interactive callers (the manager,
 /// toggle-collapse) pass `wait` to block instead.
 pub fn sync(api: &dyn Api, state_dir: &Path, force: bool, wait: bool) -> Result<String> {
+    run(api, state_dir, force, wait, None)
+}
+
+/// A change to sidebar.json made under the sync lock, so a running sync cannot save over it.
+#[derive(Clone, Copy)]
+enum Change<'a> {
+    Toggle(&'a str),
+    /// A header click: unfold the group when `unfold_on_click` is on.
+    Unfold(&'a str),
+    /// Flip `unfold_on_click`.
+    UnfoldOnClick,
+}
+
+/// Fold or unfold `group`, then sync. The flip happens under the sync lock, so a running sync
+/// cannot save over it.
+pub fn toggle_group(api: &dyn Api, state_dir: &Path, group: &str) -> Result<String> {
+    run(api, state_dir, false, true, Some(Change::Toggle(group)))
+}
+
+/// Flip the `unfold_on_click` setting, then sync.
+pub fn toggle_unfold_on_click(api: &dyn Api, state_dir: &Path) -> Result<String> {
+    run(api, state_dir, false, true, Some(Change::UnfoldOnClick))
+}
+
+/// A click on a header (a `workspace.focused` event for it) opens its overview, and unfolds the
+/// group when `unfold_on_click` is on; otherwise only the overview's `Space` folds. Focus stays on
+/// the header, so the sidebar does not scroll.
+pub fn header_click(api: &dyn Api, state_dir: &Path, header_id: &str) -> Result<String> {
+    let snap = snapshot(api)?;
+    let ws = snap
+        .workspaces
+        .iter()
+        .find(|w| w.workspace_id == header_id)
+        .ok_or_else(|| format!("no workspace {header_id}"))?;
+    let group = headers::group_of(ws).ok_or_else(|| format!("{header_id} is not a group header"))?;
+    run(api, state_dir, false, true, Some(Change::Unfold(group)))
+}
+
+fn run(api: &dyn Api, state_dir: &Path, force: bool, wait: bool, change: Option<Change>) -> Result<String> {
     let io = |e: std::io::Error| format!("{}: {e}", state_dir.display());
     std::fs::create_dir_all(state_dir).map_err(io)?;
     let dirty = state_dir.join("sync.dirty");
@@ -40,6 +81,9 @@ pub fn sync(api: &dyn Api, state_dir: &Path, force: bool, wait: bool) -> Result<
             std::io::Write::write_all(&mut marker, FORCE.as_bytes()).map_err(io)?;
         }
         return Ok("another sync is running; it will run again".into());
+    }
+    if let Some(change) = change {
+        apply(api, state_dir, change)?;
     }
     // A marker left by an earlier run that hit MAX_PASSES still counts.
     let mut force = force | take_dirty(&dirty).unwrap_or(false);
@@ -55,6 +99,25 @@ pub fn sync(api: &dyn Api, state_dir: &Path, force: bool, wait: bool) -> Result<
         }
     }
     Ok(summary)
+}
+
+fn apply(api: &dyn Api, state_dir: &Path, change: Change) -> Result<()> {
+    let sidebar = Sidebar::load(state_dir);
+    let group = match change {
+        Change::UnfoldOnClick => None,
+        Change::Toggle(group) => Some(group),
+        Change::Unfold(group) => (sidebar.is_folded(group) && sidebar.unfold_on_click).then_some(group),
+    };
+    let next = match (change, group) {
+        (Change::UnfoldOnClick, _) => Sidebar { unfold_on_click: !sidebar.unfold_on_click, ..sidebar },
+        (_, Some(group)) => {
+            let snap = snapshot(api)?;
+            let groups = Groups::load(state_dir, &snap).map_err(|e| format!("groups.json: {e}"))?;
+            sidebar.toggle(group, &groups)
+        }
+        (_, None) => return Ok(()),
+    };
+    next.save(state_dir).map_err(|e| format!("sidebar.json: {e}"))
 }
 
 /// Whether `try_lock` got the lock (false: another sync holds it).
@@ -88,22 +151,13 @@ fn sync_once(api: &dyn Api, state_dir: &Path, force: bool) -> Result<String> {
     }
     let split = Split::of(&snap.workspaces);
 
-    // Clicking a header folds/unfolds its group, then returns to the last project.
-    let mut focused = snap.focused_workspace_id.clone();
-    let clicked = split.headers.iter().find(|(_, w)| Some(&w.workspace_id) == focused.as_ref()).map(|(g, _)| *g);
-    let is_project = |id: &str| split.projects.iter().any(|w| w.workspace_id == id);
-    if let Some(group) = clicked {
-        sidebar = sidebar.toggle(group, &groups);
-        if let Some(back) = sidebar.last_focused.clone().filter(|b| is_project(b)) {
-            api.call("workspace.focus", json!({"workspace_id": back}))?;
-            focused = Some(back);
-        }
-    } else if let Some(id) = focused.clone().filter(|f| is_project(f)) {
-        sidebar.last_focused = Some(id);
-    }
+    let focused = snap.focused_workspace_id.clone();
     let mut header_ids: Vec<String> = split.headers.iter().map(|(_, w)| w.workspace_id.clone()).collect();
     header_ids.sort();
     sidebar.header_ids = header_ids;
+    if let Ok(exe) = std::env::current_exe() {
+        ensure_overviews(api, &exe.to_string_lossy(), &split, &snap);
+    }
 
     let sections = sections(&split.projects, &snap.panes, &groups);
     let order = desired_order(&sections, |g| split.header_id(g));
@@ -205,26 +259,59 @@ fn set_agent_view(api: &dyn Api, state_dir: &Path, label: &str, fresh: bool) {
     }
 }
 
-/// `workspace.focused` only needs a sync when a group is folded or a header was clicked. A
-/// skipped event still records the workspace as `last_focused`, so a later header click returns
-/// to the right place.
+/// `workspace.focused` only needs a sync when a group is folded: folded groups keep the focused
+/// row showing.
 pub fn focus_needs_sync(state_dir: &Path) -> bool {
-    let event = std::env::var("HERDR_PLUGIN_EVENT_JSON").unwrap_or_default();
-    let sidebar = Sidebar::load(state_dir);
-    if event.contains('⟦')
-        || sidebar.header_ids.iter().any(|id| event.contains(&format!("\"{id}\"")))
-        || !sidebar.collapsed.is_empty()
-    {
-        return true;
+    !Sidebar::load(state_dir).collapsed.is_empty()
+}
+
+/// The header a `workspace.focused` event landed on, if it did (a click on that header).
+pub fn focused_header(state_dir: &Path) -> Option<String> {
+    let event = std::env::var("HERDR_PLUGIN_EVENT_JSON").ok()?;
+    let event: serde_json::Value = serde_json::from_str(&event).ok()?;
+    let id = event["data"]["workspace_id"].as_str()?;
+    Sidebar::load(state_dir).header_ids.iter().find(|h| *h == id).cloned()
+}
+
+/// Keep the group overview running in every header's pane. Types only into a pane whose
+/// foreground is an idle shell, so it also comes back after a restart (Herdr restores shells,
+/// not their programs). Best effort: an error is reported, not fatal.
+fn ensure_overviews(api: &dyn Api, exe: &str, split: &Split, snap: &Snapshot) {
+    for (_, header) in &split.headers {
+        let id = header.workspace_id.as_str();
+        let mut shell = None;
+        for pane in snap.panes.iter().filter(|p| p.workspace_id == id) {
+            let info = match api.call("pane.process_info", json!({"pane_id": pane.pane_id})) {
+                Ok(info) => info,
+                Err(e) => {
+                    eprintln!("space-kit: overview: {e}");
+                    return;
+                }
+            };
+            let procs = info["process_info"]["foreground_processes"].as_array().cloned().unwrap_or_default();
+            let runs_overview = procs.iter().any(|p| {
+                p["name"] == "space-kit" && p["argv"].as_array().is_some_and(|a| a.iter().any(|x| x == "overview"))
+            });
+            if runs_overview {
+                shell = None;
+                break;
+            }
+            let is_shell = procs.iter().any(|p| p["name"].as_str().is_some_and(|n| SHELLS.contains(&n)));
+            if is_shell && shell.is_none() {
+                shell = Some(pane.pane_id.as_str());
+            }
+        }
+        if let Some(pane) = shell {
+            let text = format!("exec {} overview {id}\r", shell_quote(exe));
+            if let Err(e) = api.call("pane.send_text", json!({"pane_id": pane, "text": text})) {
+                eprintln!("space-kit: overview: {e}");
+            }
+        }
     }
-    let focused = serde_json::from_str::<serde_json::Value>(&event)
-        .ok()
-        .and_then(|e| e["data"]["workspace_id"].as_str().map(str::to_owned));
-    if focused.is_some() && focused != sidebar.last_focused {
-        // Best effort: a failed write only means the next header click goes back less precisely.
-        let _ = Sidebar { last_focused: focused, ..sidebar }.save(state_dir);
-    }
-    false
+}
+
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 /// Fold or unfold the group of `workspace` (a worktree folds its repo's group).
@@ -240,10 +327,9 @@ pub fn toggle_collapse(api: &dyn Api, state_dir: &Path, workspace: Option<&str>)
             .ok_or("this workspace is not in a group")?
             .to_owned(),
     };
-    let sidebar = Sidebar::load(state_dir).toggle(&group, &groups);
-    sidebar.save(state_dir).map_err(|e| format!("sidebar.json: {e}"))?;
-    sync(api, state_dir, false, true)?;
-    Ok(format!("{group}: {}", if sidebar.is_folded(&group) { "collapsed" } else { "expanded" }))
+    toggle_group(api, state_dir, &group)?;
+    let folded = Sidebar::load(state_dir).is_folded(&group);
+    Ok(format!("{group}: {}", if folded { "collapsed" } else { "expanded" }))
 }
 
 /// The workspace an action was invoked from.
@@ -277,22 +363,22 @@ mod tests {
         let dir = temp_dir(name);
         let two = PathKey::for_workspace(&serde_json::from_value(snap("p1")["workspaces"][1].clone()).unwrap(), &[]);
         Groups::default().create("A").unwrap().move_to(two.as_str(), Some("A")).save(&dir).unwrap();
-        Sidebar { last_focused: Some("p1".into()), ..Default::default() }.save(&dir).unwrap();
         dir
     }
 
     #[test]
-    fn orders_workspaces_under_their_header_and_folds_on_header_click() {
+    fn orders_workspaces_under_their_header_and_a_focused_header_is_no_click() {
         let dir = setup("sync-click");
         let api = Fake { snapshot: snap("h1"), ..Default::default() };
         sync(&api, &dir, true, true).unwrap();
         let sent = api.sent.borrow();
         let moved = sent.iter().find(|(m, _)| m == "workspace.move_block").unwrap();
         assert_eq!(moved.1["workspace_ids"], json!(["h1", "p2", "p1"]));
-        assert!(sent.iter().any(|(m, p)| m == "workspace.focus" && p["workspace_id"] == "p1"));
+        assert!(!sent.iter().any(|(m, _)| m == "workspace.focus"), "focus stays on the header");
         assert!(sent.iter().any(|(m, _)| m == "agent.view.set"));
         drop(sent);
-        assert_eq!(Sidebar::load(&dir).collapsed, ["A"]);
+        assert!(Sidebar::load(&dir).collapsed.is_empty(), "only a click event toggles");
+        assert_eq!(Sidebar::load(&dir).header_ids, ["h1"]);
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -351,18 +437,20 @@ mod tests {
     }
 
     #[test]
-    fn a_skipped_focus_event_still_records_the_last_focused_workspace() {
+    fn a_focus_event_names_the_clicked_header_and_syncs_only_when_folded() {
         let dir = setup("sync-focus");
+        Sidebar { header_ids: vec!["h1".into()], ..Default::default() }.save(&dir).unwrap();
+        let event = |id: &str| format!(r#"{{"event":"workspace.focused","data":{{"workspace_id":"{id}"}}}}"#);
         // SAFETY: tests touching this variable run in this one test only.
-        unsafe {
-            std::env::set_var(
-                "HERDR_PLUGIN_EVENT_JSON",
-                r#"{"event":"workspace.focused","data":{"workspace_id":"p2"}}"#,
-            )
-        };
-        assert!(!focus_needs_sync(&dir), "nothing folded: no sync");
-        assert_eq!(Sidebar::load(&dir).last_focused.as_deref(), Some("p2"));
+        unsafe { std::env::set_var("HERDR_PLUGIN_EVENT_JSON", event("h1")) };
+        assert_eq!(focused_header(&dir).as_deref(), Some("h1"));
+        unsafe { std::env::set_var("HERDR_PLUGIN_EVENT_JSON", event("p2")) };
+        assert_eq!(focused_header(&dir), None);
         unsafe { std::env::remove_var("HERDR_PLUGIN_EVENT_JSON") };
+        assert_eq!(focused_header(&dir), None);
+        assert!(!focus_needs_sync(&dir), "nothing folded: no sync");
+        Sidebar { collapsed: vec!["A".into()], ..Default::default() }.save(&dir).unwrap();
+        assert!(focus_needs_sync(&dir));
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -402,14 +490,70 @@ mod tests {
     }
 
     #[test]
-    fn a_header_click_without_a_known_last_project_stays_put() {
-        let dir = setup("sync-click-unknown");
-        Sidebar::default().save(&dir).unwrap();
+    fn a_header_click_only_unfolds_and_keeps_focus_there() {
+        let dir = setup("sync-header-click");
         let api = Fake { snapshot: snap("h1"), ..Default::default() };
-        sync(&api, &dir, true, true).unwrap();
+        header_click(&api, &dir, "h1").unwrap();
+        assert!(Sidebar::load(&dir).collapsed.is_empty(), "an unfolded group stays unfolded");
+        toggle_group(&api, &dir, "A").unwrap();
+        header_click(&api, &dir, "h1").unwrap();
+        assert_eq!(Sidebar::load(&dir).collapsed, ["A"], "by default a click leaves the fold alone");
+        toggle_unfold_on_click(&api, &dir).unwrap();
+        assert!(Sidebar::load(&dir).unfold_on_click);
+        header_click(&api, &dir, "h1").unwrap();
+        assert!(Sidebar::load(&dir).collapsed.is_empty(), "with the setting on, a click unfolds");
+        header_click(&api, &dir, "h1").unwrap();
+        assert!(Sidebar::load(&dir).collapsed.is_empty(), "and never folds");
         assert!(!api.methods().contains(&"workspace.focus".to_owned()));
-        assert_eq!(Sidebar::load(&dir).collapsed, ["A"]);
+        assert_eq!(header_click(&api, &dir, "p1"), Err("p1 is not a group header".into()));
+        assert_eq!(header_click(&api, &dir, "nope"), Err("no workspace nope".into()));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Answers `pane.process_info` with one foreground process per pane.
+    struct Procs(BTreeMap<&'static str, (&'static str, &'static [&'static str])>, std::cell::RefCell<Vec<Value>>);
+
+    impl Api for Procs {
+        fn call(&self, method: &str, params: Value) -> Result<Value> {
+            if method == "pane.send_text" {
+                self.1.borrow_mut().push(params);
+                return Ok(json!({}));
+            }
+            let pane = params["pane_id"].as_str().unwrap_or_default();
+            let Some((name, argv)) = self.0.get(pane) else { return Err(format!("{method}: no pane {pane}")) };
+            Ok(json!({"process_info": {"foreground_processes": [{"pid": 1, "name": name, "argv": argv}]}}))
+        }
+    }
+
+    #[test]
+    fn overviews_start_in_an_idle_header_shell_only() {
+        let snap: Snapshot = serde_json::from_value(json!({
+            "workspaces": [{"workspace_id": "h1", "label": "⟦A⟧"}, {"workspace_id": "h2", "label": "⟦B⟧"}, {"workspace_id": "h3", "label": "⟦C⟧"}],
+            "panes": [
+                {"pane_id": "h1:p2", "workspace_id": "h1"}, {"pane_id": "h1:p1", "workspace_id": "h1"},
+                {"pane_id": "h2:p1", "workspace_id": "h2"}, {"pane_id": "h2:p2", "workspace_id": "h2"},
+                {"pane_id": "h3:p1", "workspace_id": "h3"},
+            ],
+        }))
+        .unwrap();
+        let split = Split::of(&snap.workspaces);
+        let procs = BTreeMap::from([
+            ("h1:p2", ("herdr-sidebar", &[][..])),
+            ("h1:p1", ("zsh", &["-zsh"][..])),
+            ("h2:p1", ("zsh", &["-zsh"][..])),
+            ("h2:p2", ("space-kit", &["/x/space-kit", "overview", "h2"][..])),
+            ("h3:p1", ("vim", &["vim"][..])),
+        ]);
+        let api = Procs(procs, Default::default());
+        ensure_overviews(&api, "/it's/space-kit", &split, &snap);
+        let sent = api.1.borrow();
+        assert_eq!(sent.len(), 1, "B already runs it, C is busy: {sent:?}");
+        assert_eq!(sent[0]["pane_id"], "h1:p1");
+        assert_eq!(sent[0]["text"], "exec '/it'\\''s/space-kit' overview h1\r");
+        drop(sent);
+        let broken = Procs(BTreeMap::new(), Default::default());
+        ensure_overviews(&broken, "/x", &split, &snap); // reported, not fatal
+        assert!(broken.1.borrow().is_empty());
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! The group manager popup: a live tree of groups → spaces → worktrees → agents with edits.
 mod app;
 mod edit;
-mod events;
+pub(crate) mod events;
 mod keys;
 mod render;
 

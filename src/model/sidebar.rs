@@ -1,4 +1,4 @@
-//! sidebar.json: which groups are folded, plus what header clicks need (header ids, last focus).
+//! sidebar.json: which groups are folded, plus the header ids that tell a header click.
 use super::groups::Groups;
 use super::write_atomic;
 use serde::{Deserialize, Serialize};
@@ -13,12 +13,13 @@ pub struct Sidebar {
     /// Folded group names, in group order.
     #[serde(default)]
     pub collapsed: Vec<String>,
-    /// The last focused project workspace; a header click returns focus there.
-    #[serde(default)]
-    pub last_focused: Option<String>,
     /// Header workspace ids, so `workspace.focused` can tell a header click cheaply.
     #[serde(default)]
     pub header_ids: Vec<String>,
+    /// Setting (off by default): a header click also unfolds its group. Off, only `Space` in the
+    /// overview folds and unfolds. Toggled with `c` in the overview.
+    #[serde(default)]
+    pub unfold_on_click: bool,
 }
 
 impl Sidebar {
@@ -40,8 +41,8 @@ impl Sidebar {
             |v: &Value| v.as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
         Self {
             collapsed: strings(&session["collapsed"]),
-            last_focused: session["last_focused"].as_str().map(str::to_owned),
             header_ids: strings(&session["header_ids"]),
+            ..Self::default()
         }
     }
 

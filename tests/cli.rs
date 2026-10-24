@@ -106,19 +106,28 @@ fn sync_reports_and_toggle_collapse_folds() {
 }
 
 #[test]
-fn on_focus_skips_the_sync_but_records_the_focus() {
+fn on_focus_unfolds_a_clicked_header_and_skips_other_focus_changes() {
     let env = Env::new("focus");
     env.run(&["sync", "--quiet"]);
-    let event = r#"{"event":"workspace.focused","data":{"workspace_id":"p9"}}"#;
-    let out = env.command(&["sync", "--on-focus"]).env("HERDR_PLUGIN_EVENT_JSON", event).output().unwrap();
+    let focus = |id: &str| {
+        let event = format!(r#"{{"event":"workspace.focused","data":{{"workspace_id":"{id}"}}}}"#);
+        env.command(&["sync", "--on-focus"]).env("HERDR_PLUGIN_EVENT_JSON", event).output().unwrap()
+    };
+    let out = focus("p9");
     assert!(out.status.success() && out.stdout.is_empty(), "nothing folded: no sync");
-    assert_eq!(env.sidebar()["last_focused"], "p9");
-    let out = env
-        .command(&["sync", "--on-focus"])
-        .env("HERDR_PLUGIN_EVENT_JSON", r#"{"data":{"workspace_id":"h1"}}"#)
-        .output()
-        .unwrap();
-    assert!(text(&out.stdout).starts_with("Synced"), "a header id in the event: sync");
+    assert_eq!(env.sidebar()["collapsed"], json!([]));
+    env.run(&["toggle-collapse", "--workspace", "h1"]);
+    assert_eq!(env.sidebar()["collapsed"], json!(["Work"]));
+    let out = focus("h1");
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(env.sidebar()["collapsed"], json!(["Work"]), "by default a click keeps the fold");
+    let mut sidebar = env.sidebar();
+    sidebar["unfold_on_click"] = json!(true);
+    std::fs::write(env.dir.join("state/sidebar.json"), sidebar.to_string()).unwrap();
+    focus("h1");
+    assert_eq!(env.sidebar()["collapsed"], json!([]), "with unfold_on_click, a header click unfolds");
+    focus("h1");
+    assert_eq!(env.sidebar()["collapsed"], json!([]), "and never folds it");
 }
 
 #[test]
