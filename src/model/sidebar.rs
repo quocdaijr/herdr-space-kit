@@ -16,6 +16,10 @@ pub struct Sidebar {
     /// Header workspace ids, so `workspace.focused` can tell a header click cheaply.
     #[serde(default)]
     pub header_ids: Vec<String>,
+    /// Setting: a header click only opens the overview and never unfolds; `Space` there folds
+    /// and unfolds. Toggled with `c` in the overview.
+    #[serde(default)]
+    pub fold_by_space_only: bool,
 }
 
 impl Sidebar {
@@ -35,7 +39,11 @@ impl Sidebar {
     pub(super) fn from_v1(session: &Value) -> Self {
         let strings =
             |v: &Value| v.as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
-        Self { collapsed: strings(&session["collapsed"]), header_ids: strings(&session["header_ids"]) }
+        Self {
+            collapsed: strings(&session["collapsed"]),
+            header_ids: strings(&session["header_ids"]),
+            ..Self::default()
+        }
     }
 
     pub fn is_folded(&self, group: &str) -> bool {

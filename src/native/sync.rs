@@ -33,21 +33,29 @@ pub fn sync(api: &dyn Api, state_dir: &Path, force: bool, wait: bool) -> Result<
     run(api, state_dir, force, wait, None)
 }
 
-/// What a fold request does to its group.
+/// A change to sidebar.json made under the sync lock, so a running sync cannot save over it.
 #[derive(Clone, Copy)]
-enum Fold {
-    Toggle,
-    Unfold,
+enum Change<'a> {
+    Toggle(&'a str),
+    /// A header click: unfold the group, unless folding is set to `Space` only.
+    Unfold(&'a str),
+    /// Flip whether a header click unfolds.
+    SpaceOnly,
 }
 
 /// Fold or unfold `group`, then sync. The flip happens under the sync lock, so a running sync
 /// cannot save over it.
 pub fn toggle_group(api: &dyn Api, state_dir: &Path, group: &str) -> Result<String> {
-    run(api, state_dir, false, true, Some((group, Fold::Toggle)))
+    run(api, state_dir, false, true, Some(Change::Toggle(group)))
 }
 
-/// A click on a header (a `workspace.focused` event for it) unfolds its group; folding is the
-/// overview's `Space`. Focus stays on the header, whose pane shows the group overview, so the
+/// Flip the `fold_by_space_only` setting, then sync.
+pub fn toggle_space_only(api: &dyn Api, state_dir: &Path) -> Result<String> {
+    run(api, state_dir, false, true, Some(Change::SpaceOnly))
+}
+
+/// A click on a header (a `workspace.focused` event for it) unfolds its group, unless
+/// `fold_by_space_only` is set; folding is the overview's `Space`. Focus stays on the header, whose pane shows the group overview, so the
 /// sidebar does not scroll.
 pub fn header_click(api: &dyn Api, state_dir: &Path, header_id: &str) -> Result<String> {
     let snap = snapshot(api)?;
@@ -57,10 +65,10 @@ pub fn header_click(api: &dyn Api, state_dir: &Path, header_id: &str) -> Result<
         .find(|w| w.workspace_id == header_id)
         .ok_or_else(|| format!("no workspace {header_id}"))?;
     let group = headers::group_of(ws).ok_or_else(|| format!("{header_id} is not a group header"))?;
-    run(api, state_dir, false, true, Some((group, Fold::Unfold)))
+    run(api, state_dir, false, true, Some(Change::Unfold(group)))
 }
 
-fn run(api: &dyn Api, state_dir: &Path, force: bool, wait: bool, fold: Option<(&str, Fold)>) -> Result<String> {
+fn run(api: &dyn Api, state_dir: &Path, force: bool, wait: bool, change: Option<Change>) -> Result<String> {
     let io = |e: std::io::Error| format!("{}: {e}", state_dir.display());
     std::fs::create_dir_all(state_dir).map_err(io)?;
     let dirty = state_dir.join("sync.dirty");
@@ -74,13 +82,8 @@ fn run(api: &dyn Api, state_dir: &Path, force: bool, wait: bool, fold: Option<(&
         }
         return Ok("another sync is running; it will run again".into());
     }
-    if let Some((group, how)) = fold {
-        let sidebar = Sidebar::load(state_dir);
-        if matches!(how, Fold::Toggle) || sidebar.is_folded(group) {
-            let snap = snapshot(api)?;
-            let groups = Groups::load(state_dir, &snap).map_err(|e| format!("groups.json: {e}"))?;
-            sidebar.toggle(group, &groups).save(state_dir).map_err(|e| format!("sidebar.json: {e}"))?;
-        }
+    if let Some(change) = change {
+        apply(api, state_dir, change)?;
     }
     // A marker left by an earlier run that hit MAX_PASSES still counts.
     let mut force = force | take_dirty(&dirty).unwrap_or(false);
@@ -96,6 +99,25 @@ fn run(api: &dyn Api, state_dir: &Path, force: bool, wait: bool, fold: Option<(&
         }
     }
     Ok(summary)
+}
+
+fn apply(api: &dyn Api, state_dir: &Path, change: Change) -> Result<()> {
+    let sidebar = Sidebar::load(state_dir);
+    let group = match change {
+        Change::SpaceOnly => None,
+        Change::Toggle(group) => Some(group),
+        Change::Unfold(group) => (sidebar.is_folded(group) && !sidebar.fold_by_space_only).then_some(group),
+    };
+    let next = match (change, group) {
+        (Change::SpaceOnly, _) => Sidebar { fold_by_space_only: !sidebar.fold_by_space_only, ..sidebar },
+        (_, Some(group)) => {
+            let snap = snapshot(api)?;
+            let groups = Groups::load(state_dir, &snap).map_err(|e| format!("groups.json: {e}"))?;
+            sidebar.toggle(group, &groups)
+        }
+        (_, None) => return Ok(()),
+    };
+    next.save(state_dir).map_err(|e| format!("sidebar.json: {e}"))
 }
 
 /// Whether `try_lock` got the lock (false: another sync holds it).
@@ -477,6 +499,12 @@ mod tests {
         assert_eq!(Sidebar::load(&dir).collapsed, ["A"]);
         header_click(&api, &dir, "h1").unwrap();
         assert!(Sidebar::load(&dir).collapsed.is_empty(), "a click unfolds a folded group");
+        toggle_space_only(&api, &dir).unwrap();
+        toggle_group(&api, &dir, "A").unwrap();
+        header_click(&api, &dir, "h1").unwrap();
+        assert_eq!(Sidebar::load(&dir).collapsed, ["A"], "Space-only: a click leaves the fold alone");
+        toggle_space_only(&api, &dir).unwrap();
+        assert!(!Sidebar::load(&dir).fold_by_space_only);
         assert!(!api.methods().contains(&"workspace.focus".to_owned()));
         assert_eq!(header_click(&api, &dir, "p1"), Err("p1 is not a group header".into()));
         assert_eq!(header_click(&api, &dir, "nope"), Err("no workspace nope".into()));

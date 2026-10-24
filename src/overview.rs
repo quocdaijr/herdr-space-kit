@@ -1,6 +1,7 @@
 //! The group overview that lives in a header workspace's pane. Clicking a header keeps focus on
 //! it (so Herdr's sidebar does not scroll away), and this pane shows what is in the group: open a
-//! project with Enter or a click, fold or unfold the group with Space.
+//! project with Enter or a click, fold or unfold the group with Space, and `c` picks whether a
+//! header click unfolds its group.
 use crate::herdr::client::{Api, Socket};
 use crate::herdr::types::{AgentStatus, Snapshot};
 use crate::model::groups::Groups;
@@ -26,7 +27,7 @@ const POLL: Duration = Duration::from_millis(100);
 const TICK: Duration = Duration::from_secs(2);
 /// Rows above the list: the title and the key hint.
 const TOP: usize = 2;
-const HINT: &str = "↑↓ move · Enter/click open · Space fold/unfold";
+const HINT: &str = "↑↓ move · Enter/click open · Space fold/unfold · c ";
 
 #[derive(Debug, PartialEq)]
 pub struct Row {
@@ -40,6 +41,8 @@ pub struct Row {
 pub struct Overview {
     pub group: String,
     pub folded: bool,
+    /// The `fold_by_space_only` setting.
+    pub space_only: bool,
     /// Top-level entries, as the sidebar header counts them (worktrees are rows, not projects).
     pub projects: usize,
     pub rows: Vec<Row>,
@@ -69,7 +72,13 @@ pub fn build(snap: &Snapshot, groups: &Groups, sidebar: &Sidebar, header_id: &st
             });
         }
     }
-    Some(Overview { group: group.to_owned(), folded: sidebar.is_folded(group), projects: entries.len(), rows })
+    Some(Overview {
+        group: group.to_owned(),
+        folded: sidebar.is_folded(group),
+        space_only: sidebar.fold_by_space_only,
+        projects: entries.len(),
+        rows,
+    })
 }
 
 pub struct App<'a> {
@@ -123,12 +132,23 @@ impl<'a> App<'a> {
         self.refresh();
     }
 
+    fn toggle_space_only(&mut self) {
+        if self.view.is_none() {
+            return;
+        }
+        if let Err(e) = sync::toggle_space_only(self.api, &self.dir) {
+            self.status = e;
+        }
+        self.refresh();
+    }
+
     pub fn key(&mut self, code: KeyCode) {
         match code {
             KeyCode::Up | KeyCode::Char('k') => self.step(-1),
             KeyCode::Down | KeyCode::Char('j') => self.step(1),
             KeyCode::Enter => self.open(),
             KeyCode::Char(' ') => self.toggle(),
+            KeyCode::Char('c') => self.toggle_space_only(),
             _ => {}
         }
     }
@@ -153,10 +173,7 @@ impl<'a> App<'a> {
         let bold = Style::default().add_modifier(Modifier::BOLD);
         let mut lines = vec![
             Line::styled(format!("{title}{}{action}", " ".repeat(gap)), bold),
-            Line::styled(
-                if self.status.is_empty() { HINT.to_owned() } else { self.status.clone() },
-                Style::default().add_modifier(Modifier::DIM),
-            ),
+            Line::styled(self.hint(view), Style::default().add_modifier(Modifier::DIM)),
         ];
         for (i, row) in view.rows.iter().enumerate() {
             let text = fit_row(&row.prefix, &row.label, &row.counts, width);
@@ -179,6 +196,16 @@ impl<'a> App<'a> {
             },
             _ => {}
         }
+    }
+}
+
+impl App<'_> {
+    fn hint(&self, view: &Overview) -> String {
+        if !self.status.is_empty() {
+            return self.status.clone();
+        }
+        let click = if view.space_only { "header click: no fold change" } else { "header click: unfolds" };
+        format!("{HINT}{click}")
     }
 }
 
@@ -310,6 +337,10 @@ mod tests {
         assert!(app.view.as_ref().unwrap().folded, "refreshed after the fold");
         app.input(click(0));
         assert_eq!(Sidebar::load(&dir).collapsed, ["A"], "a click on the title does nothing");
+        assert!(app.lines(120)[1].to_string().ends_with("c header click: unfolds"));
+        app.input(key(KeyCode::Char('c')));
+        assert!(Sidebar::load(&dir).fold_by_space_only);
+        assert!(app.lines(120)[1].to_string().ends_with("c header click: no fold change"));
         app.input(key(KeyCode::Char(' ')));
         assert!(Sidebar::load(&dir).collapsed.is_empty(), "Space unfolds");
 
@@ -337,6 +368,7 @@ mod tests {
         app.refresh();
         app.input(key(KeyCode::Enter));
         app.input(key(KeyCode::Char(' ')));
+        app.input(key(KeyCode::Char('c')));
         assert!(app.lines(60)[0].to_string().starts_with("Not a group header"));
         let _ = std::fs::remove_dir_all(dir);
     }
