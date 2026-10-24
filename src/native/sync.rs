@@ -17,12 +17,12 @@ use std::path::Path;
 
 const MAX_PASSES: usize = 3;
 const FORCE: &str = "force";
-/// Focus landing on a header again this soon after it toggled, on a pane the header did not have
-/// at the last sync, is an echo, not a click (the herdr-sidebar plugin opens and focuses its pane
-/// in the workspace that was focused at the click).
-/// ponytail: a time window, so a real fold-then-unfold inside it is missed; use an event source
-/// field instead if Herdr adds one.
-const CLICK_ECHO_MS: u64 = 1500;
+/// Focus landing on a header again this soon after it toggled, once a pane has appeared in it
+/// since the last sync, is an echo, not a click: the herdr-sidebar plugin opens its pane in the
+/// clicked header (again after every restart) and then refocuses the pane focused before. A real
+/// click never adds a pane, so a quick re-click still toggles.
+/// ponytail: keyed on that plugin's behavior; use an event source field if Herdr adds one.
+const CLICK_ECHO_MS: u64 = 5000;
 
 fn now_ms() -> u64 {
     let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
@@ -110,7 +110,10 @@ fn sync_once(api: &dyn Api, state_dir: &Path, force: bool) -> Result<String> {
             .last_toggle
             .as_ref()
             .is_some_and(|(id, at)| *id == header.workspace_id && now.saturating_sub(*at) < CLICK_ECHO_MS)
-            && snap.focused_pane_id.as_ref().is_some_and(|p| !saved.header_panes.contains(p));
+            && snap
+                .panes
+                .iter()
+                .any(|p| p.workspace_id == header.workspace_id && !saved.header_panes.contains(&p.pane_id));
         if !echo {
             sidebar = sidebar.toggle(group, &groups);
             sidebar.last_toggle = Some((header.workspace_id.clone(), now));
@@ -445,26 +448,26 @@ mod tests {
     #[test]
     fn a_header_refocused_right_after_a_click_is_not_a_second_click() {
         let dir = setup("sync-click-echo");
-        let header = |panes: &[&str], focused_pane: &str| {
+        let header = |panes: &[&str]| {
             let mut s = snap("h1");
             s["panes"] = panes.iter().map(|p| json!({"pane_id": p, "workspace_id": "h1"})).collect();
-            s["focused_pane_id"] = json!(focused_pane);
+            s["focused_pane_id"] = json!("h1:1");
             Fake { snapshot: s, ..Default::default() }
         };
         let collapsed = || Sidebar::load(&dir).collapsed;
-        sync(&header(&["h1:1"], "h1:1"), &dir, true, true).unwrap();
+        sync(&header(&["h1:1"]), &dir, true, true).unwrap();
         assert_eq!(collapsed(), ["A"], "the click folds");
 
-        let echo = header(&["h1:1", "h1:2"], "h1:2");
+        let echo = header(&["h1:1", "h1:2"]);
         sync(&echo, &dir, false, true).unwrap();
-        assert_eq!(collapsed(), ["A"], "another plugin focusing its new pane there is not a click");
+        assert_eq!(collapsed(), ["A"], "a plugin opening a pane there and refocusing is not a click");
         assert!(echo.methods().contains(&"workspace.focus".to_owned()), "focus still leaves the header");
 
-        sync(&header(&["h1:1", "h1:2"], "h1:2"), &dir, false, true).unwrap();
-        assert!(collapsed().is_empty(), "a quick click on a known pane toggles");
+        sync(&header(&["h1:1", "h1:2"]), &dir, false, true).unwrap();
+        assert!(collapsed().is_empty(), "a quick click that adds no pane toggles");
 
         Sidebar { last_toggle: Some(("h1".into(), 0)), ..Sidebar::load(&dir) }.save(&dir).unwrap();
-        sync(&header(&["h1:1", "h1:3"], "h1:3"), &dir, false, true).unwrap();
+        sync(&header(&["h1:1", "h1:3"]), &dir, false, true).unwrap();
         assert_eq!(collapsed(), ["A"], "outside the window even a new pane is a click");
         let _ = std::fs::remove_dir_all(dir);
     }
