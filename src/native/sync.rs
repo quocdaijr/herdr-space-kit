@@ -19,6 +19,8 @@ const MAX_PASSES: usize = 3;
 const FORCE: &str = "force";
 /// Foreground process names that are an idle shell, safe to type the overview command into.
 const SHELLS: [&str; 5] = ["zsh", "bash", "fish", "sh", "dash"];
+/// Pids of the header shells already typed into, one per line.
+const OVERVIEW_SENT: &str = "overview-sent.txt";
 
 pub fn snapshot(api: &dyn Api) -> Result<Snapshot> {
     let mut result = api.call("session.snapshot", json!({}))?;
@@ -156,7 +158,7 @@ fn sync_once(api: &dyn Api, state_dir: &Path, force: bool) -> Result<String> {
     header_ids.sort();
     sidebar.header_ids = header_ids;
     if let Ok(exe) = std::env::current_exe() {
-        ensure_overviews(api, &exe.to_string_lossy(), &split, &snap);
+        ensure_overviews(api, state_dir, &exe.to_string_lossy(), &split, &snap);
     }
 
     let sections = sections(&split.projects, &snap.panes, &groups);
@@ -275,9 +277,17 @@ pub fn focused_header(state_dir: &Path) -> Option<String> {
 
 /// Keep the group overview running in every header's pane. Types only into a pane whose
 /// foreground is an idle shell, so it also comes back after a restart (Herdr restores shells,
-/// not their programs). Best effort: an error is reported, not fatal.
-fn ensure_overviews(api: &dyn Api, exe: &str, split: &Split, snap: &Snapshot) {
-    for (_, header) in &split.headers {
+/// not their programs). Each shell (by `shell_pid`, which `exec` keeps) is typed into once: until it
+/// reads the line, every sync still sees it idle, and the extra copies would reach the overview as keys.
+/// Best effort: an error is reported, not fatal.
+fn ensure_overviews(api: &dyn Api, state_dir: &Path, exe: &str, split: &Split, snap: &Snapshot) {
+    let path = state_dir.join(OVERVIEW_SENT);
+    let sent: Vec<u64> =
+        std::fs::read_to_string(&path).unwrap_or_default().lines().filter_map(|l| l.trim().parse().ok()).collect();
+    // Only shells seen this pass are kept, so pids of gone shells drop out.
+    let mut keep: Vec<u64> = Vec::new();
+    let mut complete = true;
+    'headers: for (_, header) in &split.headers {
         let id = header.workspace_id.as_str();
         let mut shell = None;
         for pane in snap.panes.iter().filter(|p| p.workspace_id == id) {
@@ -285,7 +295,8 @@ fn ensure_overviews(api: &dyn Api, exe: &str, split: &Split, snap: &Snapshot) {
                 Ok(info) => info,
                 Err(e) => {
                     eprintln!("space-kit: overview: {e}");
-                    return;
+                    complete = false;
+                    break 'headers;
                 }
             };
             let procs = info["process_info"]["foreground_processes"].as_array().cloned().unwrap_or_default();
@@ -298,15 +309,31 @@ fn ensure_overviews(api: &dyn Api, exe: &str, split: &Split, snap: &Snapshot) {
             }
             let is_shell = procs.iter().any(|p| p["name"].as_str().is_some_and(|n| SHELLS.contains(&n)));
             if is_shell && shell.is_none() {
-                shell = Some(pane.pane_id.as_str());
+                // The pane's shell, not the foreground pid: a starting shell's foreground is a new
+                // subshell each time.
+                shell = Some((pane.pane_id.as_str(), info["process_info"]["shell_pid"].as_u64()));
             }
         }
-        if let Some(pane) = shell {
-            let text = format!("exec {} overview {id}\r", shell_quote(exe));
-            if let Err(e) = api.call("pane.send_text", json!({"pane_id": pane, "text": text})) {
-                eprintln!("space-kit: overview: {e}");
-            }
+        let Some((pane, pid)) = shell else { continue };
+        if let Some(pid) = pid.filter(|p| sent.contains(p)) {
+            keep.push(pid);
+            continue;
         }
+        let text = format!("exec {} overview {id}\r", shell_quote(exe));
+        match api.call("pane.send_text", json!({"pane_id": pane, "text": text})) {
+            // Recorded only once sent, so a failed send is retried on the next sync.
+            Ok(_) => keep.extend(pid),
+            Err(e) => eprintln!("space-kit: overview: {e}"),
+        }
+    }
+    if !complete {
+        // Headers after the error went unchecked: keep their shells' pids too.
+        let unchecked: Vec<u64> = sent.iter().copied().filter(|p| !keep.contains(p)).collect();
+        keep.extend(unchecked);
+    }
+    let lines: String = keep.iter().map(|pid| format!("{pid}\n")).collect();
+    if let Err(e) = crate::model::write_atomic(&path, &lines) {
+        eprintln!("space-kit: overview: {}: {e}", path.display());
     }
 }
 
@@ -510,18 +537,33 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    /// Answers `pane.process_info` with one foreground process per pane.
-    struct Procs(BTreeMap<&'static str, (&'static str, &'static [&'static str])>, std::cell::RefCell<Vec<Value>>);
+    /// Answers `pane.process_info` with one foreground process per pane, every shell with pid `.2`.
+    struct Procs(
+        BTreeMap<&'static str, (&'static str, &'static [&'static str])>,
+        std::cell::RefCell<Vec<Value>>,
+        std::cell::Cell<u32>,
+        std::cell::Cell<u32>,
+        std::cell::Cell<bool>,
+    );
 
     impl Api for Procs {
         fn call(&self, method: &str, params: Value) -> Result<Value> {
             if method == "pane.send_text" {
+                if self.4.get() {
+                    return Err("pane.send_text: down".into());
+                }
                 self.1.borrow_mut().push(params);
                 return Ok(json!({}));
             }
             let pane = params["pane_id"].as_str().unwrap_or_default();
             let Some((name, argv)) = self.0.get(pane) else { return Err(format!("{method}: no pane {pane}")) };
-            Ok(json!({"process_info": {"foreground_processes": [{"pid": 1, "name": name, "argv": argv}]}}))
+            // A starting shell's foreground is a fresh subshell each time; `shell_pid` stays put.
+            let fresh = self.3.get() + 1;
+            self.3.set(fresh);
+            Ok(json!({"process_info": {
+                "shell_pid": self.2.get(),
+                "foreground_processes": [{"pid": 1000 + fresh, "name": name, "argv": argv}],
+            }}))
         }
     }
 
@@ -544,16 +586,47 @@ mod tests {
             ("h2:p2", ("space-kit", &["/x/space-kit", "overview", "h2"][..])),
             ("h3:p1", ("vim", &["vim"][..])),
         ]);
-        let api = Procs(procs, Default::default());
-        ensure_overviews(&api, "/it's/space-kit", &split, &snap);
+        let dir = temp_dir("overview-sent");
+        let api = Procs(procs, Default::default(), std::cell::Cell::new(1), Default::default(), Default::default());
+        ensure_overviews(&api, &dir, "/it's/space-kit", &split, &snap);
         let sent = api.1.borrow();
         assert_eq!(sent.len(), 1, "B already runs it, C is busy: {sent:?}");
         assert_eq!(sent[0]["pane_id"], "h1:p1");
         assert_eq!(sent[0]["text"], "exec '/it'\\''s/space-kit' overview h1\r");
         drop(sent);
-        let broken = Procs(BTreeMap::new(), Default::default());
-        ensure_overviews(&broken, "/x", &split, &snap); // reported, not fatal
+        ensure_overviews(&api, &dir, "/it's/space-kit", &split, &snap);
+        assert_eq!(api.1.borrow().len(), 1, "a shell that has not run it yet is not typed into twice");
+        api.2.set(2); // a new shell, as after a server restart
+        ensure_overviews(&api, &dir, "/it's/space-kit", &split, &snap);
+        assert_eq!(api.1.borrow().len(), 2, "a new shell gets it once");
+        let broken =
+            Procs(BTreeMap::new(), Default::default(), Default::default(), Default::default(), Default::default());
+        ensure_overviews(&broken, &dir, "/x", &split, &snap); // reported, not fatal
         assert!(broken.1.borrow().is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn overview_sends_are_recorded_only_when_sent_and_kept_across_errors() {
+        // h2's pane is unknown to the fake, so its process_info fails after h1 was handled.
+        let snap: Snapshot = serde_json::from_value(json!({
+            "workspaces": [{"workspace_id": "h1", "label": "⟦A⟧"}, {"workspace_id": "h2", "label": "⟦B⟧"}],
+            "panes": [{"pane_id": "h1:p1", "workspace_id": "h1"}, {"pane_id": "h2:p1", "workspace_id": "h2"}],
+        }))
+        .unwrap();
+        let split = Split::of(&snap.workspaces);
+        let procs = BTreeMap::from([("h1:p1", ("zsh", &["-zsh"][..]))]);
+        let dir = temp_dir("overview-retry");
+        let api =
+            Procs(procs, Default::default(), std::cell::Cell::new(7), Default::default(), std::cell::Cell::new(true));
+        ensure_overviews(&api, &dir, "/x", &split, &snap);
+        assert!(api.1.borrow().is_empty(), "the send failed");
+        api.4.set(false);
+        ensure_overviews(&api, &dir, "/x", &split, &snap);
+        assert_eq!(api.1.borrow().len(), 1, "a failed send is retried");
+        ensure_overviews(&api, &dir, "/x", &split, &snap);
+        assert_eq!(api.1.borrow().len(), 1, "a send before a later error is still recorded");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
