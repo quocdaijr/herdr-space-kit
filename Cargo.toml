@@ -1,6 +1,6 @@
 [package]
 name = "space-kit"
-version = "0.3.0"
+version = "0.2.1"
 edition = "2024"
 # File::lock / try_lock (sync.lock) are stable since 1.89.
 rust-version = "1.89"
